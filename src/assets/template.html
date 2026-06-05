@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>kirin &mdash; schematic diff</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header>
+    <strong>kirin</strong> &mdash; base <code>__BASE__</code> &rarr; head <code>__HEAD__</code>
+  </header>
+  <main>
+    <nav>
+      <ul id="file-list"></ul>
+    </nav>
+    <section class="viewer">
+      <div class="toolbar">
+        <div class="modes" role="tablist">
+          <button data-mode="base" title="Base only (1)">Base</button>
+          <button data-mode="head" title="Head only (2)">Head</button>
+          <button data-mode="onion" title="Onion skin (3)">Onion</button>
+          <button data-mode="swipe" title="Swipe (4)">Swipe</button>
+          <button data-mode="diff" title="Difference (5)">Diff</button>
+        </div>
+        <div class="hint"><kbd>Space</kbd> flip &middot; <kbd>1</kbd>&ndash;<kbd>5</kbd> modes &middot; <kbd>scroll</kbd> zoom &middot; <kbd>drag</kbd> pan &middot; <kbd>0</kbd> reset</div>
+      </div>
+      <div class="stage-wrap">
+        <div class="stage" id="stage" data-mode="head">
+          <img class="layer base" id="layer-base" alt="base" draggable="false">
+          <img class="layer head" id="layer-head" alt="head" draggable="false">
+          <div class="swipe-divider" id="swipe-divider"></div>
+        </div>
+        <div class="placeholder" id="placeholder"></div>
+      </div>
+    </section>
+  </main>
+  <script src="assets/entries.js"></script>
+  <script src="assets/script.js"></script>
+</body>
+</html>
