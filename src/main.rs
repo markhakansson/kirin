@@ -12,10 +12,13 @@ mod template;
 #[derive(Parser)]
 #[command(about = "Compare KiCAD projects between commits")]
 struct Args {
+    #[arg(short, long, default_value = ".")]
     /// Path to the git repository
     repo: PathBuf,
+    #[arg(short, long, default_value = "HEAD~1")]
     /// Base commit reference (e.g. main, HEAD~1, a commit SHA)
     base: String,
+    #[arg(short, long, default_value = "HEAD")]
     /// Head commit reference
     head: String,
     /// Output directory
