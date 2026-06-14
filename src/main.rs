@@ -18,7 +18,8 @@ struct Args {
     #[arg(short, long, default_value = "HEAD~1")]
     /// Base commit reference (e.g. main, HEAD~1, a commit SHA)
     base: String,
-    #[arg(short, long, default_value = "HEAD")]
+    // No `short`: it would derive `-h`, which collides with clap's `--help`.
+    #[arg(long, default_value = "HEAD")]
     /// Head commit reference
     head: String,
     /// Output directory
