@@ -20,12 +20,14 @@
           <button data-mode="head" title="Head only (2)">Head</button>
           <button data-mode="onion" title="Onion skin (3)">Onion</button>
           <button data-mode="swipe" title="Swipe (4)">Swipe</button>
-          <button data-mode="diff" title="Difference (5)">Diff</button>
+          <button data-mode="rg" title="Red/Green (5)">R/G</button>
+          <button data-mode="blink" title="Blink (6)">Blink</button>
         </div>
-        <div class="hint"><kbd>Space</kbd> flip &middot; <kbd>1</kbd>&ndash;<kbd>5</kbd> modes &middot; <kbd>scroll</kbd> zoom &middot; <kbd>drag</kbd> pan &middot; <kbd>0</kbd> reset</div>
+        <div class="hint"><kbd>Space</kbd> flip &middot; <kbd>1</kbd>&ndash;<kbd>6</kbd> modes &middot; <kbd>scroll</kbd> zoom &middot; <kbd>drag</kbd> pan &middot; <kbd>f</kbd> fit &middot; <kbd>0</kbd> reset</div>
       </div>
       <div class="stage-wrap">
         <div class="stage" id="stage" data-mode="head">
+          <img class="layer edge" id="layer-edge" alt="" draggable="false">
           <img class="layer base" id="layer-base" alt="base" draggable="false">
           <img class="layer head" id="layer-head" alt="head" draggable="false">
           <div class="swipe-divider" id="swipe-divider"></div>
@@ -34,6 +36,20 @@
       </div>
     </section>
   </main>
+  <!-- Filters for Red/Green mode: flatten every drawn pixel to one solid
+       color, keeping alpha. Composited with the `darken` blend, overlap
+       (unchanged) collapses to the shared 0.45 gray, while removed stays
+       red and added stays green. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <filter id="kirin-tint-old" color-interpolation-filters="sRGB">
+        <feColorMatrix type="matrix" values="0 0 0 0 1     0 0 0 0 0.45  0 0 0 0 0.45  0 0 0 1 0"/>
+      </filter>
+      <filter id="kirin-tint-new" color-interpolation-filters="sRGB">
+        <feColorMatrix type="matrix" values="0 0 0 0 0.45  0 0 0 0 1     0 0 0 0 0.45  0 0 0 1 0"/>
+      </filter>
+    </defs>
+  </svg>
   <script src="assets/entries.js"></script>
   <script src="assets/script.js"></script>
 </body>

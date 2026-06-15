@@ -56,7 +56,7 @@ nav li .path {
 
 nav li.group-header {
   cursor: default;
-  padding: 0.5rem 1rem 0.25rem;
+  padding: 0.4rem 1rem 0.2rem 1.5rem;
   font-size: 0.7rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -65,7 +65,21 @@ nav li.group-header {
   background: transparent;
 }
 nav li.group-header:hover { background: transparent; }
-nav li.group-header + li { border-top: 1px solid #e5e7eb; }
+
+nav li.project-header {
+  cursor: default;
+  padding: 0.6rem 1rem 0.3rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #111827;
+  background: #f0f1f3;
+  border-top: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+nav li.project-header:hover { background: #f0f1f3; }
 
 .badge {
   flex-shrink: 0;
@@ -160,6 +174,19 @@ section.viewer {
   height: 100%;
 }
 
+/* Board-outline context, painted behind base/head (negative z-index sits it
+   below the in-flow base image). Shown only for PCB layers that carry one. */
+.stage .layer.edge {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: -1;
+  opacity: 0.4;
+  display: none;
+}
+.stage.has-edge .layer.edge { display: block; }
+
 .stage .swipe-divider {
   position: absolute;
   top: 0;
@@ -178,16 +205,24 @@ section.viewer {
 .stage[data-mode="onion"] .layer.base { opacity: 1; }
 .stage[data-mode="onion"] .layer.head { opacity: 0.5; }
 
-.stage[data-mode="diff"] {
-  background: #000;
+/* Red/Green: base tinted red, head tinted green, composited with `darken`
+   over white, so unchanged geometry collapses to a neutral gray, removed is
+   red and added is green. */
+.stage[data-mode="rg"] { background: #fff; }
+.stage[data-mode="rg"] .layer.edge { display: none; }
+.stage[data-mode="rg"] .layer.base {
+  filter: url(#kirin-tint-old);
+  mix-blend-mode: darken;
 }
-.stage[data-mode="diff"] .layer.head {
-  mix-blend-mode: difference;
-  filter: invert(1);
+.stage[data-mode="rg"] .layer.head {
+  filter: url(#kirin-tint-new);
+  mix-blend-mode: darken;
 }
-.stage[data-mode="diff"] .layer.base {
-  filter: invert(1);
-}
+
+/* Blink: alternate base/head; JS toggles `blink-head` on a timer. */
+.stage[data-mode="blink"] .layer.head { opacity: 0; }
+.stage[data-mode="blink"].blink-head .layer.head { opacity: 1; }
+.stage[data-mode="blink"].blink-head .layer.base { visibility: hidden; }
 
 .stage[data-mode="swipe"] .layer.head {
   clip-path: inset(0 calc(100% - var(--swipe, 50%)) 0 0);
