@@ -1,8 +1,16 @@
 [package]
-name = "kirin"
+name = "kirin-rs"
 version = "0.1.0"
 edition = "2024"
+description = "A diff tool for KiCAD projects"
+repository = "https://github.com/markhakansson/kirin"
+keywords = ["kicad", "diff"]
+categories = ["command-line-utilities"]
 license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "kirin"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
