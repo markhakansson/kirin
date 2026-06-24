@@ -1,5 +1,9 @@
 (() => {
   const list = document.getElementById('file-list');
+  const sidebarTitle = document.getElementById('sidebar-title');
+  const prefetchEl = document.getElementById('prefetch');
+  const prefetchBar = document.getElementById('prefetch-bar');
+  const prefetchLabel = document.getElementById('prefetch-label');
   const stage = document.getElementById('stage');
   const stageWrap = stage.parentElement;
   const layerBase = document.getElementById('layer-base');
@@ -15,6 +19,21 @@
   let activeIdx = null;
   let mode = 'head';
   const liElements = [];
+
+  // Background prefetch state. A queue warms every layer SVG so navigation is
+  // instant, but the layer currently on screen always loads first: warming
+  // pauses while the active images are still fetching (see prioritizeActiveLoad),
+  // so on a slow link the open page is never left blank behind the batch.
+  const PREFETCH_BAR_MIN = 8;     // hide the progress chrome for trivially small diffs
+  const PREFETCH_CONCURRENCY = 4; // background fetches in flight; low keeps the active view responsive
+  const prefetched = new Map();   // url -> Image, held so the browser keeps each cached/decoded
+  let prefetchQueue = [];
+  let prefetchInFlight = 0;
+  let prefetchPaused = false;
+  let prefetchTotal = 0;
+  let prefetchDone = 0;
+  let prefetchShowBar = false;
+  let activeLoadGen = 0;          // bumps each selection so stale load callbacks can't resume warming
 
   // Pan/zoom state. Persists across file switches; reset with `0`.
   let scale = 1;
@@ -118,6 +137,9 @@
                    (m === 'base' && !hasBase) ||
                    (m === 'head' && !hasHead);
     });
+
+    // The just-shown layer takes priority over background warming.
+    prioritizeActiveLoad();
   }
 
   function select(idx) {
@@ -257,4 +279,100 @@
     liElements[i] = li;
   });
   select(0);
+
+  // Warm an in-memory cache of every layer SVG so switching pages - between
+  // layers, and between PCB and schematic views - is instant. The viewer reuses
+  // three <img> elements and swaps their `src`, so once you switch away the old
+  // SVG is unreferenced and the browser may drop its decoded bitmap. The report
+  // is a static page opened off disk (file://) with no HTTP cache to fall back
+  // on, so revisiting a page re-reads and re-decodes from scratch. Holding a
+  // reference to each Image keeps it alive, turning later src swaps into
+  // memory-cache hits (no fetch, no re-decode).
+  function updatePrefetchBar() {
+    prefetchBar.value = prefetchDone;
+    prefetchLabel.textContent = `${prefetchDone}/${prefetchTotal}`;
+  }
+  function onPrefetchSettled() {
+    prefetchDone += 1;
+    if (!prefetchShowBar) return;
+    updatePrefetchBar();
+    if (prefetchDone === prefetchTotal) {
+      // Announce completion in the title, drop the now-redundant count, then
+      // hold the full bar a moment before fading it out.
+      sidebarTitle.textContent = 'Caching finished';
+      prefetchLabel.textContent = '';
+      setTimeout(() => prefetchEl.classList.add('done'), 800);
+    }
+  }
+  // Pull URLs off the queue up to the concurrency cap. A no-op while paused, so
+  // a freshly selected layer (see prioritizeActiveLoad) gets the link to itself.
+  function pumpPrefetch() {
+    if (prefetchPaused) return;
+    while (prefetchInFlight < PREFETCH_CONCURRENCY && prefetchQueue.length) {
+      const url = prefetchQueue.shift();
+      prefetchInFlight += 1;
+      const img = new Image();
+      prefetched.set(url, img);
+      img.onload = img.onerror = () => {
+        prefetchInFlight -= 1;
+        onPrefetchSettled();
+        pumpPrefetch();
+      };
+      img.fetchPriority = 'low'; // let the browser favor the visible layer images
+      img.src = url;
+    }
+  }
+  // Whenever the shown layer changes, give it the connection to itself: pause
+  // background warming until the images currently on screen finish loading.
+  function prioritizeActiveLoad() {
+    const gen = (activeLoadGen += 1);
+    prefetchPaused = true;
+    let pending = 0;
+    const resume = () => {
+      if (gen !== activeLoadGen || pending > 0) return; // superseded, or still loading
+      prefetchPaused = false;
+      pumpPrefetch();
+    };
+    for (const im of [layerBase, layerHead, layerEdge]) {
+      if (!im.getAttribute('src') || im.complete) continue; // no source, or already loaded
+      pending += 1;
+      const onDone = () => {
+        im.removeEventListener('load', onDone);
+        im.removeEventListener('error', onDone);
+        pending -= 1;
+        resume();
+      };
+      im.addEventListener('load', onDone);
+      im.addEventListener('error', onDone);
+    }
+    resume(); // nothing pending -> resume immediately
+  }
+  function startPrefetch() {
+    const urls = new Set();
+    for (const e of entries) {
+      if (e.status !== 'added') urls.add(`a/svg/${e.path}`);
+      if (e.status !== 'removed') urls.add(`b/svg/${e.path}`);
+      if (e.edge) urls.add(e.edge);
+    }
+    prefetchTotal = urls.size;
+    if (prefetchTotal === 0) return;
+    // Only show the progress bar when there's enough to warm that the wait is
+    // noticeable; small diffs cache instantly and don't need the chrome.
+    prefetchShowBar = prefetchTotal >= PREFETCH_BAR_MIN;
+    if (prefetchShowBar) {
+      prefetchBar.max = prefetchTotal;
+      // Width transitions on the bar also bubble transitionend up here, so only
+      // collapse the element once its own opacity fade (the `done` class) ends.
+      prefetchEl.addEventListener('transitionend', (ev) => {
+        if (ev.target === prefetchEl && ev.propertyName === 'opacity') prefetchEl.hidden = true;
+      });
+      prefetchEl.hidden = false;
+      updatePrefetchBar();
+    }
+    prefetchQueue = [...urls];
+    pumpPrefetch(); // stays parked if the initial layer is still loading
+  }
+  // Defer past first paint so the initially selected page renders first.
+  if (window.requestIdleCallback) requestIdleCallback(startPrefetch);
+  else setTimeout(startPrefetch, 200);
 })();
