@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 
 mod kicad;
+mod svg;
 mod template;
 
 #[derive(Parser)]
@@ -27,11 +28,12 @@ struct Args {
     /// Output directory
     #[arg(short, long, default_value = "kirin-out")]
     out: PathBuf,
+    /// Skip SVG minification
+    #[arg(long)]
+    no_svg_compression: bool,
 }
 
 fn main() -> Result<()> {
-    env_logger::init();
-
     let args = Args::parse();
 
     // Quick-check to verify external dependencies exist
@@ -50,7 +52,7 @@ fn main() -> Result<()> {
 
     let projects = kicad::discover_projects(&base_blobs, &head_blobs, args.project_dir.as_deref());
     if projects.is_empty() {
-        log::warn!("no KiCAD projects (*.kicad_pro) found in the selected range");
+        eprintln!("warning: no KiCAD projects (*.kicad_pro) found in the selected range");
     }
 
     let mut pages = Vec::new();
@@ -64,12 +66,16 @@ fn main() -> Result<()> {
         )?);
     }
 
+    if !args.no_svg_compression {
+        svg::optimize_pages(&args.out, &pages);
+    }
+
     template::generate_site(&args.out, &args.base, &args.head, &pages)?;
 
     // Sources are only needed for the render step; keep the artifact small.
     let _ = std::fs::remove_dir_all(args.out.join(".work"));
 
-    log::info!(
+    eprintln!(
         "Done ({} changed page(s)). Open '{}/index.html'",
         pages.len(),
         args.out.display()
