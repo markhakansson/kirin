@@ -1,4 +1,28 @@
 (() => {
+  // Theme toggle. Initial value comes from prefers-color-scheme (set inline
+  // in the template before first paint). Until the user clicks the toggle,
+  // we keep following the OS preference live; after a click, their choice
+  // wins for the rest of the session (no persistence).
+  const root = document.documentElement;
+  const themeToggle = document.getElementById('theme-toggle');
+  const colorScheme = window.matchMedia ? matchMedia('(prefers-color-scheme: dark)') : null;
+  let themeUserOverride = false;
+  function setTheme(t) {
+    root.dataset.theme = t;
+    themeToggle.setAttribute('aria-label',
+      t === 'dark' ? 'Switch to light theme' : 'Switch to dark theme');
+  }
+  setTheme(root.dataset.theme === 'dark' ? 'dark' : 'light');
+  themeToggle.addEventListener('click', () => {
+    themeUserOverride = true;
+    setTheme(root.dataset.theme === 'dark' ? 'light' : 'dark');
+  });
+  if (colorScheme) {
+    const onSchemeChange = (e) => { if (!themeUserOverride) setTheme(e.matches ? 'dark' : 'light'); };
+    if (colorScheme.addEventListener) colorScheme.addEventListener('change', onSchemeChange);
+    else colorScheme.addListener(onSchemeChange);
+  }
+
   const list = document.getElementById('file-list');
   const sidebarTitle = document.getElementById('sidebar-title');
   const prefetchEl = document.getElementById('prefetch');
