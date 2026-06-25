@@ -14,7 +14,7 @@
   const modeButtons = document.querySelectorAll('.modes button');
 
   const BADGE_LETTERS = { added: 'A', removed: 'R', modified: 'M', unchanged: 'U' };
-  const MODES = ['base', 'head', 'onion', 'swipe', 'rg', 'blink'];
+  const MODES = ['base', 'head', 'swipe', 'rg', 'blink'];
 
   let activeIdx = null;
   let mode = 'head';
@@ -132,7 +132,7 @@
     // Disable buttons for missing sides
     modeButtons.forEach((b) => {
       const m = b.dataset.mode;
-      const needsBoth = m === 'onion' || m === 'swipe' || m === 'rg' || m === 'blink';
+      const needsBoth = m === 'swipe' || m === 'rg' || m === 'blink';
       b.disabled = (needsBoth && (!hasBase || !hasHead)) ||
                    (m === 'base' && !hasBase) ||
                    (m === 'head' && !hasHead);
@@ -221,7 +221,7 @@
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-    const map = { '1': 'base', '2': 'head', '3': 'onion', '4': 'swipe', '5': 'rg', '6': 'blink' };
+    const map = { '1': 'base', '2': 'head', '3': 'swipe', '4': 'rg', '5': 'blink' };
     if (map[e.key]) {
       const btn = [...modeButtons].find((b) => b.dataset.mode === map[e.key]);
       if (btn && !btn.disabled) setMode(map[e.key]);
