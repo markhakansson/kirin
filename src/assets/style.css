@@ -37,6 +37,58 @@ nav {
 
 nav ul { list-style: none; margin: 0; padding: 0; }
 
+.sidebar-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+}
+.sidebar-title {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+.prefetch {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 1;
+  min-width: 0;
+  opacity: 1;
+  transition: opacity 0.4s ease;
+}
+.prefetch[hidden] { display: none; }
+.prefetch.done { opacity: 0; }
+.prefetch-bar {
+  flex: 1;
+  min-width: 0;
+  height: 4px;
+  border: none;
+  border-radius: 2px;
+  overflow: hidden;
+  appearance: none;
+  -webkit-appearance: none;
+  background: #e5e7eb;
+}
+.prefetch-bar::-webkit-progress-bar { background: #e5e7eb; }
+.prefetch-bar::-webkit-progress-value { background: #2563eb; transition: width 0.2s ease; }
+.prefetch-bar::-moz-progress-bar { background: #2563eb; }
+.prefetch-label {
+  font-size: 0.7rem;
+  color: #6b7280;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
 nav li {
   padding: 0.4rem 1rem;
   cursor: pointer;
@@ -174,8 +226,6 @@ section.viewer {
   height: 100%;
 }
 
-/* Board-outline context, painted behind base/head (negative z-index sits it
-   below the in-flow base image). Shown only for PCB layers that carry one. */
 .stage .layer.edge {
   position: absolute;
   inset: 0;
@@ -198,16 +248,12 @@ section.viewer {
   z-index: 5;
 }
 
-/* Mode rules */
 .stage[data-mode="base"] .layer.head { opacity: 0; }
 .stage[data-mode="head"] .layer.base { visibility: hidden; }
 
 .stage[data-mode="onion"] .layer.base { opacity: 1; }
 .stage[data-mode="onion"] .layer.head { opacity: 0.5; }
 
-/* Red/Green: base tinted red, head tinted green, composited with `darken`
-   over white, so unchanged geometry collapses to a neutral gray, removed is
-   red and added is green. */
 .stage[data-mode="rg"] { background: #fff; }
 .stage[data-mode="rg"] .layer.edge { display: none; }
 .stage[data-mode="rg"] .layer.base {
@@ -219,7 +265,6 @@ section.viewer {
   mix-blend-mode: darken;
 }
 
-/* Blink: alternate base/head; JS toggles `blink-head` on a timer. */
 .stage[data-mode="blink"] .layer.head { opacity: 0; }
 .stage[data-mode="blink"].blink-head .layer.head { opacity: 1; }
 .stage[data-mode="blink"].blink-head .layer.base { visibility: hidden; }
