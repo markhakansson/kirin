@@ -4,10 +4,22 @@
   <meta charset="utf-8">
   <title>kirin &mdash; schematic diff</title>
   <link rel="stylesheet" href="assets/style.css">
+  <script>
+    // Set theme from the OS/browser preference before first paint.
+    // The in-page toggle (see script.js) overrides this for the session.
+    document.documentElement.dataset.theme =
+      window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  </script>
 </head>
 <body>
   <header>
-    <strong>kirin</strong> &mdash; base <code>__BASE__</code> &rarr; head <code>__HEAD__</code>
+    <div class="header-info">
+      <strong>kirin</strong> &mdash; base <code>__BASE__</code> &rarr; head <code>__HEAD__</code>
+    </div>
+    <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch to dark theme" title="Toggle theme">
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/></svg>
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+    </button>
   </header>
   <main>
     <nav>
