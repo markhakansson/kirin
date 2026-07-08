@@ -60,7 +60,8 @@
   let prefetchShowBar = false;
   let activeLoadGen = 0;          // bumps each selection so stale load callbacks can't resume warming
 
-  // Pan/zoom state. Persists across file switches; reset with `0`.
+  // Pan/zoom state. Each page fits to the viewport when opened; reset to
+  // 1:1 with `0`.
   let scale = 1;
   let tx = 0;
   let ty = 0;
@@ -90,6 +91,28 @@
     tx = (wrapW - stageW * scale) / 2;
     ty = (wrapH - stageH * scale) / 2;
     applyTransform();
+  }
+
+  // Fit the just-selected page once its size-driving image is ready. The
+  // layers load asynchronously, so fitting right away would measure the
+  // previous page; wait for the decode when the image is not cached yet.
+  // The generation counter drops stale fits when the user has already
+  // moved on to another page.
+  let fitGen = 0;
+  function fitWhenReady() {
+    const gen = ++fitGen;
+    const driver = layerBase.getAttribute('src') ? layerBase : layerHead;
+    if (!driver.getAttribute('src') || driver.complete) {
+      fitView();
+      return;
+    }
+    const onDone = () => {
+      driver.removeEventListener('load', onDone);
+      driver.removeEventListener('error', onDone);
+      if (gen === fitGen) fitView();
+    };
+    driver.addEventListener('load', onDone);
+    driver.addEventListener('error', onDone);
   }
 
   // Blink mode alternates base/head by toggling a class on the stage.
@@ -176,6 +199,7 @@
     liElements[idx].classList.add('active');
     const entry = entries[idx];
     applyAvailability(entry);
+    fitWhenReady();
   }
 
   // Swipe interaction: move cursor over stage to drag the divider.
