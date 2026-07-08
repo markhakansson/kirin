@@ -32,7 +32,8 @@
   const stageWrap = stage.parentElement;
   const layerBase = document.getElementById('layer-base');
   const layerHead = document.getElementById('layer-head');
-  const layerEdge = document.getElementById('layer-edge');
+  const layerEdgeBase = document.getElementById('layer-edge-base');
+  const layerEdgeHead = document.getElementById('layer-edge-head');
   const divider = document.getElementById('swipe-divider');
   const placeholder = document.getElementById('placeholder');
   const modeButtons = document.querySelectorAll('.modes button');
@@ -128,14 +129,17 @@
     layerBase.src = hasBase ? `a/svg/${entry.path}` : '';
     layerHead.src = hasHead ? `b/svg/${entry.path}` : '';
 
-    // Board-outline context for PCB layers (already an index-relative URL).
-    if (entry.edge) {
-      layerEdge.src = entry.edge;
-      stage.classList.add('has-edge');
-    } else {
-      layerEdge.src = '';
-      stage.classList.remove('has-edge');
-    }
+    // Board-outline context for PCB layers (already index-relative URLs).
+    // One overlay per side: each is shown/hidden by the same mode rules as
+    // its revision's layer, so flipping base/head also flips the outline.
+    const setEdge = (img, url, cls) => {
+      img.src = url || '';
+      stage.classList.toggle(cls, !!url);
+    };
+    setEdge(layerEdgeBase, entry.edgeBase, 'has-edge-base');
+    setEdge(layerEdgeHead, entry.edgeHead, 'has-edge-head');
+    // Schematic and PCB pages get theme filters applied differently.
+    stage.dataset.kind = entry.kind;
 
     // Force base layer to drive container size when present; otherwise let head do it.
     if (hasBase) {
@@ -357,7 +361,7 @@
       prefetchPaused = false;
       pumpPrefetch();
     };
-    for (const im of [layerBase, layerHead, layerEdge]) {
+    for (const im of [layerBase, layerHead, layerEdgeBase, layerEdgeHead]) {
       if (!im.getAttribute('src') || im.complete) continue; // no source, or already loaded
       pending += 1;
       const onDone = () => {
@@ -376,7 +380,8 @@
     for (const e of entries) {
       if (e.status !== 'added') urls.add(`a/svg/${e.path}`);
       if (e.status !== 'removed') urls.add(`b/svg/${e.path}`);
-      if (e.edge) urls.add(e.edge);
+      if (e.edgeBase) urls.add(e.edgeBase);
+      if (e.edgeHead) urls.add(e.edgeHead);
     }
     prefetchTotal = urls.size;
     if (prefetchTotal === 0) return;
