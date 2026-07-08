@@ -273,7 +273,7 @@
     return;
   }
 
-  const KIND_LABELS = { sch: 'Schematics', pcb: 'PCB layers' };
+  const KIND_LABELS = { sch: 'Schematics', pcb: 'PCB layers', fp: 'Footprints', sym: 'Symbols' };
   let currentProject = null;
   let currentKind = null;
   entries.forEach((e, i) => {

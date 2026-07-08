@@ -51,9 +51,6 @@ fn main() -> Result<()> {
     let head_blobs = kicad::tree_blobs(&repo, &args.head)?;
 
     let projects = kicad::discover_projects(&base_blobs, &head_blobs, args.project_dir.as_deref());
-    if projects.is_empty() {
-        eprintln!("warning: no KiCAD projects (*.kicad_pro) found in the selected range");
-    }
 
     let mut pages = Vec::new();
     for project in &projects {
@@ -64,6 +61,25 @@ fn main() -> Result<()> {
             project,
             &args.out,
         )?);
+    }
+    pages.extend(kicad::process_footprint_libs(
+        &repo,
+        &base_blobs,
+        &head_blobs,
+        args.project_dir.as_deref(),
+        &args.out,
+    )?);
+    pages.extend(kicad::process_symbol_libs(
+        &repo,
+        &base_blobs,
+        &head_blobs,
+        args.project_dir.as_deref(),
+        &args.out,
+    )?);
+    if projects.is_empty() && pages.is_empty() {
+        eprintln!(
+            "warning: no KiCAD projects (*.kicad_pro) or changed libraries found in the selected range"
+        );
     }
 
     if !args.no_svg_compression {

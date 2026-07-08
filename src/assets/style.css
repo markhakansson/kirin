@@ -70,16 +70,18 @@
 
 [data-theme="dark"] .hint kbd { background: var(--bg-emphasis); }
 
-/* Theme adaptation of the SVG layers. Schematics are drawn dark-on-white,
-   so they render natively in light mode and are inverted in dark mode; PCB
-   layers (including Edge.Cuts) are plotted in KiCAD's dark-canvas colors,
-   so the inversion goes the other way. hue-rotate compensates for the
-   color shift that pure invert introduces on colored content. rg-mode is
-   excluded — its mix-blend-mode darken math needs the white stage backdrop
-   and its own SVG tint filters. */
+/* Theme adaptation of the SVG layers. Schematics and symbols are drawn
+   dark-on-white, so they render natively in light mode and are inverted in
+   dark mode; PCB layers (including Edge.Cuts) and footprints are plotted
+   in KiCAD's dark-canvas colors, so the inversion goes the other way.
+   hue-rotate compensates for the color shift that pure invert introduces
+   on colored content. rg-mode is excluded — its mix-blend-mode darken math
+   needs the white stage backdrop and its own SVG tint filters. */
 [data-theme="dark"] .stage-wrap { background: var(--bg-muted); }
 [data-theme="dark"] .stage[data-kind="sch"]:not([data-mode="rg"]) .layer,
-[data-theme="light"] .stage[data-kind="pcb"]:not([data-mode="rg"]) .layer {
+[data-theme="dark"] .stage[data-kind="sym"]:not([data-mode="rg"]) .layer,
+[data-theme="light"] .stage[data-kind="pcb"]:not([data-mode="rg"]) .layer,
+[data-theme="light"] .stage[data-kind="fp"]:not([data-mode="rg"]) .layer {
   filter: invert(1) hue-rotate(180deg);
 }
 
