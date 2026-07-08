@@ -21,8 +21,12 @@ pub fn generate_site(out_dir: &Path, base_ref: &str, head_ref: &str, pages: &[Pa
         entries_js.push_str(&json_escape(&page.rel));
         entries_js.push_str(", status: ");
         entries_js.push_str(&json_escape(page.status.as_str()));
-        if let Some(edge) = &page.edge {
-            entries_js.push_str(", edge: ");
+        if let Some(edge) = &page.edge_base {
+            entries_js.push_str(", edgeBase: ");
+            entries_js.push_str(&json_escape(edge));
+        }
+        if let Some(edge) = &page.edge_head {
+            entries_js.push_str(", edgeHead: ");
             entries_js.push_str(&json_escape(edge));
         }
         entries_js.push_str(" },\n");

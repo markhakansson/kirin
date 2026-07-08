@@ -70,13 +70,16 @@
 
 [data-theme="dark"] .hint kbd { background: var(--bg-emphasis); }
 
-/* Dark-mode viewer: dark backdrop, and invert the SVG layers so dark
-   schematic lines become light. hue-rotate compensates for the color
-   shift that pure invert introduces on colored PCB layers.
-   rg-mode is excluded — its mix-blend-mode darken math needs the
-   white stage backdrop and its own SVG tint filters. */
+/* Theme adaptation of the SVG layers. Schematics are drawn dark-on-white,
+   so they render natively in light mode and are inverted in dark mode; PCB
+   layers (including Edge.Cuts) are plotted in KiCAD's dark-canvas colors,
+   so the inversion goes the other way. hue-rotate compensates for the
+   color shift that pure invert introduces on colored content. rg-mode is
+   excluded — its mix-blend-mode darken math needs the white stage backdrop
+   and its own SVG tint filters. */
 [data-theme="dark"] .stage-wrap { background: var(--bg-muted); }
-[data-theme="dark"] .stage:not([data-mode="rg"]) .layer {
+[data-theme="dark"] .stage[data-kind="sch"]:not([data-mode="rg"]) .layer,
+[data-theme="light"] .stage[data-kind="pcb"]:not([data-mode="rg"]) .layer {
   filter: invert(1) hue-rotate(180deg);
 }
 
@@ -340,10 +343,12 @@ section.viewer {
   width: 100%;
   height: 100%;
   z-index: -1;
-  opacity: 0.4;
   display: none;
 }
-.stage.has-edge .layer.edge { display: block; }
+/* Each side's outline obeys the same mode rules as that side's layer (the
+   imgs also carry .base/.head), so only the shown revision's outline appears. */
+.stage.has-edge-base .layer.edge.base { display: block; }
+.stage.has-edge-head .layer.edge.head { display: block; }
 
 .stage .swipe-divider {
   position: absolute;
@@ -359,11 +364,9 @@ section.viewer {
 .stage[data-mode="base"] .layer.head { opacity: 0; }
 .stage[data-mode="head"] .layer.base { visibility: hidden; }
 
-.stage[data-mode="onion"] .layer.base { opacity: 1; }
-.stage[data-mode="onion"] .layer.head { opacity: 0.5; }
-
 .stage[data-mode="rg"] { background: var(--canvas); }
-.stage[data-mode="rg"] .layer.edge { display: none; }
+.stage[data-mode="rg"] .layer.edge.base,
+.stage[data-mode="rg"] .layer.edge.head { display: none; }
 .stage[data-mode="rg"] .layer.base {
   filter: url(#kirin-tint-old);
   mix-blend-mode: darken;

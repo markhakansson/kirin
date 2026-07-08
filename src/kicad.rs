@@ -64,9 +64,12 @@ pub struct Page {
     /// SVG path relative to a side's `svg/` root, used to build `a/svg/<rel>` and `b/svg/<rel>`.
     pub rel: String,
     pub status: Status,
-    /// For PCB layers: an index-relative URL to the Edge.Cuts SVG, overlaid as
-    /// board-outline context (e.g. `b/svg/anchor/pcb/anchor-Edge_Cuts.svg`).
-    pub edge: Option<String>,
+    /// For PCB layers: index-relative URLs to each side's Edge.Cuts SVG,
+    /// overlaid as board-outline context (e.g.
+    /// `a/svg/anchor/pcb/anchor-Edge_Cuts.svg`). Kept per side so the viewer
+    /// shows each revision with its own outline.
+    pub edge_base: Option<String>,
+    pub edge_head: Option<String>,
 }
 
 /// A KiCAD project, identified by its `.kicad_pro` file.
@@ -259,7 +262,8 @@ fn render_schematics(
                 name,
                 rel: format!("{rel_dir}/{file}"),
                 status,
-                edge: None,
+                edge_base: None,
+                edge_head: None,
             });
         }
     }
@@ -335,15 +339,15 @@ fn render_pcb(project: &Project, work_a: &Path, work_b: &Path, out: &Path) -> Re
         stem.replace('_', ".").replace("Silkscreen", "SilkS")
     };
 
-    // Edge.Cuts overlay context, preferring the head side.
+    // Edge.Cuts overlay context, one per side so each revision is shown with
+    // its own outline.
     let edge_file = format!("{prefix}Edge_Cuts.svg");
-    let edge = if head_files.contains(&edge_file) {
-        Some(format!("b/svg/{folder}/pcb/{edge_file}"))
-    } else if base_files.contains(&edge_file) {
-        Some(format!("a/svg/{folder}/pcb/{edge_file}"))
-    } else {
-        None
-    };
+    let edge_base = base_files
+        .contains(&edge_file)
+        .then(|| format!("a/svg/{folder}/pcb/{edge_file}"));
+    let edge_head = head_files
+        .contains(&edge_file)
+        .then(|| format!("b/svg/{folder}/pcb/{edge_file}"));
 
     // Union of produced files, in physical stackup order.
     let mut files: Vec<String> = base_files.union(&head_files).cloned().collect();
@@ -359,7 +363,8 @@ fn render_pcb(project: &Project, work_a: &Path, work_b: &Path, out: &Path) -> Re
                 kind: Kind::Pcb,
                 rel: format!("{rel_dir}/{file}"),
                 // The outline page shows its own diff; it needs no extra context.
-                edge: (file != edge_file).then(|| edge.clone()).flatten(),
+                edge_base: (file != edge_file).then(|| edge_base.clone()).flatten(),
+                edge_head: (file != edge_file).then(|| edge_head.clone()).flatten(),
                 name: label_of(&file),
                 status,
             });

@@ -25,7 +25,7 @@ pub fn optimize_pages(out: &Path, pages: &[Page]) {
         if page.status != Status::Removed {
             files.insert(out.join("b").join("svg").join(&page.rel));
         }
-        if let Some(edge) = &page.edge {
+        for edge in page.edge_base.iter().chain(&page.edge_head) {
             files.insert(out.join(edge));
         }
     }
