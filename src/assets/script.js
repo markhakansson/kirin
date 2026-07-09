@@ -65,6 +65,9 @@
   let scale = 1;
   let tx = 0;
   let ty = 0;
+  // Set while the view should track the fitted state (see fitWhenReady);
+  // any manual zoom/pan/reset takes over.
+  let pendingFit = false;
   const MIN_SCALE = 0.1;
   const MAX_SCALE = 80;
 
@@ -73,6 +76,7 @@
   }
 
   function resetView() {
+    pendingFit = false;
     scale = 1;
     tx = 0;
     ty = 0;
@@ -93,27 +97,28 @@
     applyTransform();
   }
 
-  // Fit the just-selected page once its size-driving image is ready. The
-  // layers load asynchronously, so fitting right away would measure the
-  // previous page; wait for the decode when the image is not cached yet.
-  // The generation counter drops stale fits when the user has already
-  // moved on to another page.
-  let fitGen = 0;
-  function fitWhenReady() {
-    const gen = ++fitGen;
-    const driver = layerBase.getAttribute('src') ? layerBase : layerHead;
-    if (!driver.getAttribute('src') || driver.complete) {
-      fitView();
-      return;
-    }
-    const onDone = () => {
-      driver.removeEventListener('load', onDone);
-      driver.removeEventListener('error', onDone);
-      if (gen === fitGen) fitView();
-    };
-    driver.addEventListener('load', onDone);
-    driver.addEventListener('error', onDone);
+  // Fit the just-selected page. The layers load asynchronously and the
+  // moment the stage's layout reflects the new image differs per browser
+  // (Firefox settles the very first page after the img load event), so no
+  // single moment is safe to measure at. Fit immediately with whatever
+  // size the stage has, again when the size-driving image loads, and keep
+  // re-fitting while the stage or the viewport settles, until the user
+  // takes over the view (zoom, pan or reset).
+  function refit() {
+    if (pendingFit) fitView();
   }
+  function fitWhenReady() {
+    pendingFit = true;
+    fitView();
+    const driver = layerBase.getAttribute('src') ? layerBase : layerHead;
+    if (driver.getAttribute('src') && !driver.complete) {
+      driver.addEventListener('load', refit, { once: true });
+      driver.addEventListener('error', refit, { once: true });
+    }
+  }
+  const refitter = new ResizeObserver(refit);
+  refitter.observe(stage);
+  refitter.observe(stageWrap);
 
   // Blink mode alternates base/head by toggling a class on the stage.
   let blinkTimer = null;
@@ -223,6 +228,7 @@
   // events, zooms at a similar rate to a mouse wheel instead of rocketing.
   stageWrap.addEventListener('wheel', (e) => {
     e.preventDefault();
+    pendingFit = false;
     const rect = stageWrap.getBoundingClientRect();
     const cx = e.clientX - rect.left;
     const cy = e.clientY - rect.top;
@@ -246,6 +252,7 @@
     if (mode === 'swipe') return;
     if (e.button !== 0) return;
     dragging = true;
+    pendingFit = false;
     dragOrigin = { x: e.clientX - tx, y: e.clientY - ty };
     stageWrap.classList.add('grabbing');
   });
