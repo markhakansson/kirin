@@ -32,15 +32,20 @@ that changed visually between the two revisions are included; each
 revision's own `Edge.Cuts` outline is overlaid as context behind that
 revision's PCB layers in the viewer.
 
+Libraries are diffed too: footprints (`*.pretty` directories of
+`*.kicad_mod` files) and symbols (`*.kicad_sym`), one page per changed
+footprint or symbol unit, grouped by library. Changes that do not affect
+the rendered image (e.g. 3D model paths) are dropped.
+
 On a monorepo with several boards, `--project-dir <path>` restricts the
 report to projects under that repo-relative path, e.g. `--project-dir anchor`.
 
 ## Viewer
 
 The report opens to a sidebar of changed pages (grouped by project, then
-schematics and PCB layers) and a pan/zoom stage. Scroll to zoom, drag to
-pan, `f` or double-click to fit, `0` to reset to 1:1, and `j`/`k` to step
-through pages.
+schematics and PCB layers) and a pan/zoom stage. Pages fit to the
+viewport when opened. Scroll to zoom, drag to pan, `f` or double-click
+to fit, `0` to reset to 1:1, and `j`/`k` to step through pages.
 
 Five compare modes, switchable with keys `1`-`5` or the toolbar:
 

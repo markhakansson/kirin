@@ -37,7 +37,10 @@ pub fn optimize_pages(out: &Path, pages: &[Page]) {
                 after += a;
                 count += 1;
             }
-            Err(e) => eprintln!("warning: SVG optimization skipped for '{}': {e}", path.display()),
+            Err(e) => eprintln!(
+                "warning: SVG optimization skipped for '{}': {e}",
+                path.display()
+            ),
         }
     }
     if before > 0 {
@@ -77,13 +80,20 @@ fn human(bytes: u64) -> String {
 /// Run the default optimiser jobs over one SVG document.
 fn optimize(source: &str) -> Result<String> {
     // KiCAD prepends an SVG DOCTYPE; roxmltree rejects a DTD unless allowed.
-    let options = ParsingOptions { allow_dtd: true, ..Default::default() };
-    parse_with_options(source, options, |dom, allocator| -> Result<String, String> {
-        Jobs::default()
-            .run(dom, &Info::new(allocator))
-            .map_err(|e| e.to_string())?;
-        dom.serialize().map_err(|e| e.to_string())
-    })
+    let options = ParsingOptions {
+        allow_dtd: true,
+        ..Default::default()
+    };
+    parse_with_options(
+        source,
+        options,
+        |dom, allocator| -> Result<String, String> {
+            Jobs::default()
+                .run(dom, &Info::new(allocator))
+                .map_err(|e| e.to_string())?;
+            dom.serialize().map_err(|e| e.to_string())
+        },
+    )
     .map_err(|e| anyhow::anyhow!("parse: {e}"))?
     .map_err(|e| anyhow::anyhow!("optimise: {e}"))
 }
@@ -100,7 +110,10 @@ mod tests {
             <rect x="0.000000" y="0.000000" width="100.000000" height="100.000000" fill="#ff0000"/>
         </svg>"##;
         let out = optimize(input).unwrap();
-        assert!(out.len() < input.len(), "expected smaller output, got: {out}");
+        assert!(
+            out.len() < input.len(),
+            "expected smaller output, got: {out}"
+        );
         assert!(out.contains("<svg"));
         assert!(!out.contains("editor cruft"));
     }

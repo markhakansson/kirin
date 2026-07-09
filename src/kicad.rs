@@ -26,6 +26,8 @@ const DEFAULT_EXTRA_LAYERS: &[&str] = &[
 pub enum Kind {
     Sch,
     Pcb,
+    Fp,
+    Sym,
 }
 
 impl Kind {
@@ -33,6 +35,8 @@ impl Kind {
         match self {
             Kind::Sch => "sch",
             Kind::Pcb => "pcb",
+            Kind::Fp => "fp",
+            Kind::Sym => "sym",
         }
     }
 }
@@ -203,6 +207,246 @@ fn materialize(
             Some("kicad_sch") | Some("kicad_pcb") => {}
             _ => continue,
         }
+        let obj = repo.find_object(*oid)?;
+        let out = dst.join(path);
+        if let Some(parent) = out.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&out, &obj.data)?;
+    }
+    Ok(())
+}
+
+/// Diff every footprint library (a `*.pretty` directory of `*.kicad_mod`
+/// files) touched between the two revisions. Only changed footprints are
+/// materialized and exported; each becomes one page.
+pub fn process_footprint_libs(
+    repo: &gix::Repository,
+    base: &[(PathBuf, ObjectId)],
+    head: &[(PathBuf, ObjectId)],
+    filter: Option<&Path>,
+    out: &Path,
+) -> Result<Vec<Page>> {
+    // Library dir -> footprint file -> oid, for one side.
+    let collect = |blobs: &[(PathBuf, ObjectId)]| {
+        let mut libs: BTreeMap<PathBuf, BTreeMap<PathBuf, ObjectId>> = BTreeMap::new();
+        for (path, oid) in blobs {
+            if path.extension().and_then(|e| e.to_str()) != Some("kicad_mod") {
+                continue;
+            }
+            if let Some(prefix) = filter
+                && !path.starts_with(prefix)
+            {
+                continue;
+            }
+            let Some(dir) = path.parent() else { continue };
+            if dir.extension().and_then(|e| e.to_str()) != Some("pretty") {
+                continue;
+            }
+            libs.entry(dir.to_path_buf())
+                .or_default()
+                .insert(path.clone(), *oid);
+        }
+        libs
+    };
+    let libs_a = collect(base);
+    let libs_b = collect(head);
+
+    let mut pages = Vec::new();
+    let lib_dirs: BTreeSet<&PathBuf> = libs_a.keys().chain(libs_b.keys()).collect();
+    for lib in lib_dirs {
+        let empty = BTreeMap::new();
+        let side_a = libs_a.get(lib).unwrap_or(&empty);
+        let side_b = libs_b.get(lib).unwrap_or(&empty);
+        // Footprints whose blob differs between the sides (or exists on one only).
+        let changed = |ours: &BTreeMap<PathBuf, ObjectId>, theirs: &BTreeMap<PathBuf, ObjectId>| {
+            ours.iter()
+                .filter(|(p, o)| theirs.get(*p) != Some(o))
+                .map(|(p, o)| (p.clone(), *o))
+                .collect::<Vec<_>>()
+        };
+        let changed_a = changed(side_a, side_b);
+        let changed_b = changed(side_b, side_a);
+        if changed_a.is_empty() && changed_b.is_empty() {
+            continue;
+        }
+
+        let label = lib.to_string_lossy().into_owned();
+        let folder = sanitize(&label);
+        let rel_dir = format!("{folder}/fp");
+        let work = out.join(".work");
+        let render = |side: &str, files: &[(PathBuf, ObjectId)]| -> Result<BTreeSet<String>> {
+            let svg_dir = out.join(side).join("svg").join(&folder).join("fp");
+            if files.is_empty() {
+                return Ok(BTreeSet::new());
+            }
+            let lib_dir = work.join(side).join("fplib").join(lib);
+            write_blobs(repo, files, &work.join(side).join("fplib"))?;
+            export_library_svgs("fp", &lib_dir, &svg_dir)?;
+            svg_files(&svg_dir)
+        };
+        let files_a = render("a", &changed_a)?;
+        let files_b = render("b", &changed_b)?;
+
+        for file in files_a.union(&files_b) {
+            let bp = files_a.contains(file).then(|| {
+                out.join("a")
+                    .join("svg")
+                    .join(&folder)
+                    .join("fp")
+                    .join(file)
+            });
+            let hp = files_b.contains(file).then(|| {
+                out.join("b")
+                    .join("svg")
+                    .join(&folder)
+                    .join("fp")
+                    .join(file)
+            });
+            if let Some(status) = classify(bp.as_deref(), hp.as_deref())? {
+                pages.push(Page {
+                    project: label.clone(),
+                    kind: Kind::Fp,
+                    name: file.strip_suffix(".svg").unwrap_or(file).to_string(),
+                    rel: format!("{rel_dir}/{file}"),
+                    status,
+                    edge_base: None,
+                    edge_head: None,
+                });
+            }
+        }
+    }
+    Ok(pages)
+}
+
+/// Diff every symbol library (`*.kicad_sym`) touched between the two
+/// revisions. The whole library is exported on both sides (one SVG per symbol
+/// unit) and only visually changed units are kept.
+pub fn process_symbol_libs(
+    repo: &gix::Repository,
+    base: &[(PathBuf, ObjectId)],
+    head: &[(PathBuf, ObjectId)],
+    filter: Option<&Path>,
+    out: &Path,
+) -> Result<Vec<Page>> {
+    let collect = |blobs: &[(PathBuf, ObjectId)]| {
+        blobs
+            .iter()
+            .filter(|(p, _)| {
+                p.extension().and_then(|e| e.to_str()) == Some("kicad_sym")
+                    && filter.is_none_or(|prefix| p.starts_with(prefix))
+            })
+            .map(|(p, o)| (p.clone(), *o))
+            .collect::<BTreeMap<_, _>>()
+    };
+    let libs_a = collect(base);
+    let libs_b = collect(head);
+
+    let mut pages = Vec::new();
+    let libs: BTreeSet<&PathBuf> = libs_a.keys().chain(libs_b.keys()).collect();
+    for lib in libs {
+        let oid_a = libs_a.get(lib);
+        let oid_b = libs_b.get(lib);
+        if oid_a == oid_b {
+            continue;
+        }
+
+        let label = lib.to_string_lossy().into_owned();
+        let folder = sanitize(&label);
+        let rel_dir = format!("{folder}/sym");
+        let work = out.join(".work");
+        let render = |side: &str, oid: Option<&ObjectId>| -> Result<BTreeSet<String>> {
+            let Some(oid) = oid else {
+                return Ok(BTreeSet::new());
+            };
+            let svg_dir = out.join(side).join("svg").join(&folder).join("sym");
+            write_blobs(
+                repo,
+                &[(lib.clone(), *oid)],
+                &work.join(side).join("symlib"),
+            )?;
+            export_library_svgs("sym", &work.join(side).join("symlib").join(lib), &svg_dir)?;
+            svg_files(&svg_dir)
+        };
+        let files_a = render("a", oid_a)?;
+        let files_b = render("b", oid_b)?;
+
+        let union: BTreeSet<&String> = files_a.union(&files_b).collect();
+        for file in &union {
+            let bp = files_a.contains(*file).then(|| {
+                out.join("a")
+                    .join("svg")
+                    .join(&folder)
+                    .join("sym")
+                    .join(file)
+            });
+            let hp = files_b.contains(*file).then(|| {
+                out.join("b")
+                    .join("svg")
+                    .join(&folder)
+                    .join("sym")
+                    .join(file)
+            });
+            if let Some(status) = classify(bp.as_deref(), hp.as_deref())? {
+                pages.push(Page {
+                    project: label.clone(),
+                    kind: Kind::Sym,
+                    name: symbol_name(file, &union),
+                    rel: format!("{rel_dir}/{file}"),
+                    status,
+                    edge_base: None,
+                    edge_head: None,
+                });
+            }
+        }
+    }
+    Ok(pages)
+}
+
+/// Run `kicad-cli <fp|sym> export svg` on one library, into `svg_dir`.
+fn export_library_svgs(kind: &str, library: &Path, svg_dir: &Path) -> Result<()> {
+    fs::create_dir_all(svg_dir)?;
+    let status = Command::new("kicad-cli")
+        .arg(kind)
+        .args(["export", "svg", "-o"])
+        .arg(svg_dir)
+        .arg(library)
+        .status()
+        .context("failed to invoke 'kicad-cli' - is KiCAD installed and on PATH?")?;
+    if !status.success() {
+        anyhow::bail!("kicad-cli failed for '{}'", library.display());
+    }
+    Ok(())
+}
+
+/// Friendly symbol page name: `Foo_unit2.svg` -> `Foo unit 2`, with the unit
+/// suffix dropped entirely for single-unit symbols (the common case).
+fn symbol_name(file: &str, all: &BTreeSet<&String>) -> String {
+    let stem = file.strip_suffix(".svg").unwrap_or(file);
+    let Some((base, unit)) = stem.rsplit_once("_unit") else {
+        return stem.to_string();
+    };
+    if !unit.chars().all(|c| c.is_ascii_digit()) {
+        return stem.to_string();
+    }
+    let siblings = all
+        .iter()
+        .filter(|f| {
+            f.strip_suffix(".svg")
+                .and_then(|s| s.rsplit_once("_unit"))
+                .is_some_and(|(b, u)| b == base && u.chars().all(|c| c.is_ascii_digit()))
+        })
+        .count();
+    if unit == "1" && siblings == 1 {
+        base.to_string()
+    } else {
+        format!("{base} unit {unit}")
+    }
+}
+
+/// Write the given blobs to `dst`, preserving their repo-relative paths.
+fn write_blobs(repo: &gix::Repository, blobs: &[(PathBuf, ObjectId)], dst: &Path) -> Result<()> {
+    for (path, oid) in blobs {
         let obj = repo.find_object(*oid)?;
         let out = dst.join(path);
         if let Some(parent) = out.parent() {
