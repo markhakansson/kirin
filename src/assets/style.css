@@ -60,7 +60,7 @@
 
   --accent: #3b82f6;
   --accent-strong: #2563eb;
-  --accent-subtle: #1e3a8a;
+  --accent-subtle: #1e40af;
 
   --status-added: #22c55e;
   --status-removed: #ef4444;
@@ -201,7 +201,7 @@ nav ul { list-style: none; margin: 0; padding: 0; }
   font-variant-numeric: tabular-nums;
 }
 
-nav li {
+nav li.entry {
   padding: 0.4rem 1rem;
   cursor: pointer;
   display: flex;
@@ -210,28 +210,50 @@ nav li {
   font-size: 0.85rem;
 }
 
-nav li:hover { background: var(--border); }
-nav li.active { background: var(--accent-subtle); font-weight: 600; }
-nav li .path {
+nav li.entry:hover { background: var(--border); }
+nav li.entry.active {
+  background: var(--accent-subtle);
+  font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+nav li.entry .path {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-nav li.group-header {
-  cursor: default;
+nav summary {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+nav summary::-webkit-details-marker { display: none; }
+nav summary::marker { content: ''; }
+nav summary::before {
+  content: '';
+  flex-shrink: 0;
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid currentColor;
+  transition: transform 0.12s ease;
+}
+nav details[open] > summary::before { transform: rotate(90deg); }
+
+nav summary.group-header {
   padding: 0.4rem 1rem 0.2rem 1.5rem;
   font-size: 0.7rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--fg-muted);
-  background: transparent;
 }
-nav li.group-header:hover { background: transparent; }
+nav summary.group-header:hover { background: var(--border); }
 
-nav li.project-header {
-  cursor: default;
+nav summary.project-header {
   padding: 0.6rem 1rem 0.3rem;
   font-size: 0.8rem;
   font-weight: 700;
@@ -243,7 +265,7 @@ nav li.project-header {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-nav li.project-header:hover { background: var(--bg-emphasis); }
+nav summary.project-header:hover { background: var(--border-strong); }
 
 .badge {
   flex-shrink: 0;
@@ -275,9 +297,12 @@ section.viewer {
   font-size: 0.85rem;
 }
 
+.toolbar-actions { display: flex; align-items: center; gap: 0.75rem; }
+
 .modes { display: flex; gap: 0.25rem; }
 
-.modes button {
+.modes button,
+.toggle {
   padding: 0.3rem 0.7rem;
   border: 1px solid var(--border-strong);
   background: var(--bg);
@@ -287,8 +312,10 @@ section.viewer {
   font-size: 0.8rem;
 }
 
-.modes button:hover { background: var(--bg-subtle); }
-.modes button.active {
+.modes button:hover,
+.toggle:hover { background: var(--bg-subtle); }
+.modes button.active,
+.toggle.active {
   background: var(--accent);
   color: var(--on-accent);
   border-color: var(--accent-strong);
@@ -389,6 +416,8 @@ section.viewer {
   clip-path: inset(0 0 0 var(--swipe, 50%));
 }
 .stage[data-mode="swipe"] .swipe-divider { display: block; }
+
+.stage.mirrored .layer { transform: scaleX(-1); }
 
 .placeholder {
   color: var(--fg-placeholder);
