@@ -37,6 +37,27 @@ Libraries are diffed too: footprints (`*.pretty` directories of
 footprint or symbol unit, grouped by library. Changes that do not affect
 the rendered image (e.g. 3D model paths) are dropped.
 
+Beyond the visual diff, parts are compared semantically by their KiCAD
+UUIDs. Each fact is reported in the domain that owns it: added, removed
+and renamed parts in both, value and property changes on the schematic
+(the assigned footprint, MPN, LCSC - any field except documentation-only
+ones, so custom BOM fields count too), moves and rotations on the board,
+library swaps in whichever file they occur. A
+part that switched board side is reported under both copper layers,
+marking where it left and where it landed. The
+viewer nests them in the sidebar under the page they happened on,
+collapsed behind a summary line ("5 changes · 38% of parts changed");
+clicking a change (or stepping with `n`/`p`, which expands the group it
+enters) jumps to that page, zooms in and marks the exact location. Parts that were deleted and re-placed
+under the same reference are matched up and reported by their actual
+differences rather than as a remove/add pair.
+
+Electrical connectivity is compared as well, from netlists exported per
+revision. Net names take no part in the comparison - nets are matched by
+the pins they connect, so renaming a label is not a change - and only
+pins whose connections actually changed are reported ("pin 2:
+TJA_CONFIG1 -> +3V3"), with the marker pointing at the pin itself.
+
 On a monorepo with several boards, `--project-dir <path>` restricts the
 report to projects under that repo-relative path, e.g. `--project-dir anchor`.
 
@@ -46,6 +67,12 @@ The report opens to a sidebar of changed pages (grouped by project, then
 schematics and PCB layers) and a pan/zoom stage. Pages fit to the
 viewport when opened. Scroll to zoom, drag to pan, `f` or double-click
 to fit, `0` to reset to 1:1, and `j`/`k` to step through pages.
+
+The address bar follows the view: the current page, focused change and
+compare mode live in the URL hash, so copying it gives a colleague a
+link that opens on the same change, highlighted and zoomed. Changes are
+addressed by reference and detail, so links survive regenerating the
+report.
 
 Five compare modes, switchable with keys `1`-`5` or the toolbar:
 

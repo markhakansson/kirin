@@ -5,7 +5,10 @@ use std::process::Stdio;
 use anyhow::{Context, Result};
 use clap::Parser;
 
+mod ids;
 mod kicad;
+mod netlist;
+mod semantic;
 mod svg;
 mod template;
 
@@ -53,14 +56,12 @@ fn main() -> Result<()> {
     let projects = kicad::discover_projects(&base_blobs, &head_blobs, args.project_dir.as_deref());
 
     let mut pages = Vec::new();
+    let mut changes = Vec::new();
     for project in &projects {
-        pages.extend(kicad::process_project(
-            &repo,
-            &base_blobs,
-            &head_blobs,
-            project,
-            &args.out,
-        )?);
+        let (project_pages, project_changes) =
+            kicad::process_project(&repo, &base_blobs, &head_blobs, project, &args.out)?;
+        pages.extend(project_pages);
+        changes.extend(project_changes);
     }
     pages.extend(kicad::process_footprint_libs(
         &repo,
@@ -86,7 +87,7 @@ fn main() -> Result<()> {
         svg::optimize_pages(&args.out, &pages);
     }
 
-    template::generate_site(&args.out, &args.base, &args.head, &pages)?;
+    template::generate_site(&args.out, &args.base, &args.head, &pages, &changes)?;
 
     // Sources are only needed for the render step; keep the artifact small.
     let _ = std::fs::remove_dir_all(args.out.join(".work"));

@@ -15,6 +15,15 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+derive_more = { version = "2.1.1", features = ["display", "from", "as_ref"] }
 gix = { version = "0.70", features = ["revision"] }
+# Fork branch carrying KiCad v10 parser fixes awaiting upstream review
+# (https://github.com/Milind220/kiutils-rs PRs #27, #28, #29); switch back
+# to crates.io versions once they are released.
+kiutils_kicad = { git = "https://github.com/korken89/kiutils-rs", branch = "kirin-local" }
+kiutils_sexpr = { git = "https://github.com/korken89/kiutils-rs", branch = "kirin-local" }
 oxvg_ast = { version = "0.0.5", features = ["roxmltree"] }
 oxvg_optimiser = { version = "0.0.5", default-features = false }
+
+[lints.clippy]
+redundant_type_annotations = "warn"

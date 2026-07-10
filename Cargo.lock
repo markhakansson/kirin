@@ -239,6 +239,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "convert_case"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "633458d4ef8c78b72454de2d54fd6ab2e60f9e02be22f3c6104cdc8a4e0fceb9"
+dependencies = [
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "crc32fast"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -364,6 +373,7 @@ version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "799a97264921d8623a957f6c3b9011f3b5492f557bbb7a5a19b7fa6d06ba8dcb"
 dependencies = [
+ "convert_case 0.10.0",
  "proc-macro2",
  "quote",
  "rustc_version",
@@ -1700,9 +1710,30 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "derive_more 2.1.1",
  "gix",
+ "kiutils_kicad",
+ "kiutils_sexpr",
  "oxvg_ast",
  "oxvg_optimiser",
+]
+
+[[package]]
+name = "kiutils_kicad"
+version = "0.3.0"
+source = "git+https://github.com/korken89/kiutils-rs?branch=kirin-local#1f1c4ca51eda7f8cc2d30352b6a752569458e492"
+dependencies = [
+ "kiutils_sexpr",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "kiutils_sexpr"
+version = "0.1.1"
+source = "git+https://github.com/korken89/kiutils-rs?branch=kirin-local#1f1c4ca51eda7f8cc2d30352b6a752569458e492"
+dependencies = [
+ "thiserror",
 ]
 
 [[package]]
@@ -1761,7 +1792,7 @@ version = "1.0.0-alpha.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "84c12744d1279367caed41739ef094c325d53fb0ffcd4f9b84a368796f870252"
 dependencies = [
- "convert_case",
+ "convert_case 0.6.0",
  "proc-macro2",
  "quote",
  "syn 1.0.109",
