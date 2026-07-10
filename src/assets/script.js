@@ -37,6 +37,7 @@
   const divider = document.getElementById('swipe-divider');
   const placeholder = document.getElementById('placeholder');
   const modeButtons = document.querySelectorAll('.modes button');
+  const mirrorToggle = document.getElementById('mirror-toggle');
 
   const BADGE_LETTERS = { added: 'A', removed: 'R', modified: 'M', unchanged: 'U' };
   const MODES = ['base', 'head', 'swipe', 'rg', 'blink'];
@@ -201,9 +202,13 @@
   function select(idx) {
     if (activeIdx !== null) liElements[activeIdx].classList.remove('active');
     activeIdx = idx;
-    liElements[idx].classList.add('active');
-    const entry = entries[idx];
-    applyAvailability(entry);
+    const li = liElements[idx];
+    li.classList.add('active');
+    // Unfold any collapsed sections above the newly selected entry.
+    for (let el = li.parentElement; el; el = el.parentElement) {
+      if (el.tagName === 'DETAILS' && !el.open) el.open = true;
+    }
+    applyAvailability(entries[idx]);
     fitWhenReady();
   }
 
@@ -217,7 +222,11 @@
     const stageX = (wrapX - tx) / scale;
     const stageW = stage.offsetWidth;
     const clamped = Math.max(0, Math.min(stageW, stageX));
-    const pct = (clamped / stageW) * 100;
+    // Clip-path lives on the mirrored layers, so invert its position when
+    // mirrored so the visual split still lands under the cursor. The divider
+    // sits on the un-mirrored stage and needs no adjustment.
+    const clipX = stage.classList.contains('mirrored') ? stageW - clamped : clamped;
+    const pct = (clipX / stageW) * 100;
     stage.style.setProperty('--swipe', `${pct}%`);
     divider.style.left = `${clamped}px`;
   });
@@ -250,7 +259,8 @@
   let dragOrigin = null;
   stageWrap.addEventListener('mousedown', (e) => {
     if (mode === 'swipe') return;
-    if (e.button !== 0) return;
+    if (e.button !== 0 && e.button !== 1) return;
+    if (e.button === 1) e.preventDefault();
     dragging = true;
     pendingFit = false;
     dragOrigin = { x: e.clientX - tx, y: e.clientY - ty };
@@ -277,6 +287,13 @@
     });
   });
 
+  function toggleMirror() {
+    const on = stage.classList.toggle('mirrored');
+    mirrorToggle.classList.toggle('active', on);
+    mirrorToggle.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+  mirrorToggle.addEventListener('click', toggleMirror);
+
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
@@ -291,6 +308,8 @@
       resetView();
     } else if (e.key === 'f') {
       fitView();
+    } else if (e.key === 'm') {
+      toggleMirror();
     } else if (e.key === 'ArrowDown' || e.key === 'j') {
       if (activeIdx !== null && activeIdx + 1 < entries.length) select(activeIdx + 1);
     } else if (e.key === 'ArrowUp' || e.key === 'k') {
@@ -305,38 +324,55 @@
   }
 
   const KIND_LABELS = { sch: 'Schematics', pcb: 'PCB layers', fp: 'Footprints', sym: 'Symbols' };
-  let currentProject = null;
-  let currentKind = null;
+
+  // Group entries by project, then by kind, preserving original order.
+  const groups = new Map();
   entries.forEach((e, i) => {
-    // Group by project, then by kind within each project.
-    if (e.project !== currentProject) {
-      const ph = document.createElement('li');
-      ph.className = 'project-header';
-      ph.textContent = e.project;
-      list.appendChild(ph);
-      currentProject = e.project;
-      currentKind = null;
-    }
-    if (e.kind !== currentKind) {
-      const header = document.createElement('li');
-      header.className = 'group-header';
-      header.textContent = KIND_LABELS[e.kind] || e.kind;
-      list.appendChild(header);
-      currentKind = e.kind;
-    }
-    const li = document.createElement('li');
-    const badge = document.createElement('span');
-    badge.className = 'badge ' + e.status;
-    badge.textContent = BADGE_LETTERS[e.status] || '?';
-    const name = document.createElement('span');
-    name.className = 'path';
-    name.textContent = e.name;
-    li.appendChild(badge);
-    li.appendChild(name);
-    li.onclick = () => select(i);
-    list.appendChild(li);
-    liElements[i] = li;
+    if (!groups.has(e.project)) groups.set(e.project, new Map());
+    const kinds = groups.get(e.project);
+    if (!kinds.has(e.kind)) kinds.set(e.kind, []);
+    kinds.get(e.kind).push(i);
   });
+
+  function makeSection(cls, headerCls, label) {
+    const li = document.createElement('li');
+    const details = document.createElement('details');
+    details.open = true;
+    details.className = cls;
+    const summary = document.createElement('summary');
+    summary.className = headerCls;
+    summary.textContent = label;
+    const body = document.createElement('ul');
+    details.appendChild(summary);
+    details.appendChild(body);
+    li.appendChild(details);
+    return { li, body };
+  }
+
+  for (const [project, kinds] of groups) {
+    const proj = makeSection('project', 'project-header', project);
+    list.appendChild(proj.li);
+    for (const [kind, indices] of kinds) {
+      const kindSec = makeSection('kind', 'group-header', KIND_LABELS[kind] || kind);
+      proj.body.appendChild(kindSec.li);
+      for (const idx of indices) {
+        const e = entries[idx];
+        const li = document.createElement('li');
+        li.className = 'entry';
+        const badge = document.createElement('span');
+        badge.className = 'badge ' + e.status;
+        badge.textContent = BADGE_LETTERS[e.status] || '?';
+        const name = document.createElement('span');
+        name.className = 'path';
+        name.textContent = e.name;
+        li.appendChild(badge);
+        li.appendChild(name);
+        li.onclick = () => select(idx);
+        kindSec.body.appendChild(li);
+        liElements[idx] = li;
+      }
+    }
+  }
   select(0);
 
   // Warm an in-memory cache of every layer SVG so switching pages - between
