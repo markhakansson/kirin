@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::Result;
 use oxvg_ast::{
@@ -17,7 +17,7 @@ use crate::kicad::{Page, Status};
 /// in-browser decode cost. A failure on one file is logged and left as-is rather
 /// than aborting the report.
 pub fn optimize_pages(out: &Path, pages: &[Page]) {
-    let mut files: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut files = BTreeSet::new();
     for page in pages {
         if page.status != Status::Added {
             files.insert(out.join("a").join("svg").join(&page.rel));

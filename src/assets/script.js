@@ -35,6 +35,7 @@
   const layerEdgeBase = document.getElementById('layer-edge-base');
   const layerEdgeHead = document.getElementById('layer-edge-head');
   const divider = document.getElementById('swipe-divider');
+  const marker = document.getElementById('marker');
   const placeholder = document.getElementById('placeholder');
   const modeButtons = document.querySelectorAll('.modes button');
   const mirrorToggle = document.getElementById('mirror-toggle');
@@ -74,6 +75,55 @@
 
   function applyTransform() {
     stage.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+    updateMarker();
+  }
+
+  // The change marker lives in stage-wrap coordinates so it keeps a constant
+  // screen size; recompute its position from the stage transform. A change
+  // carries a location per revision (fb/fh) since parts move (or exist only
+  // on one side); show the one matching the revision on display, and no
+  // marker at all when the part does not exist there (a ring over nothing
+  // reads as a bug).
+  let markerChange = null;
+  let markerFrac = null;
+  function markerFracFor(c) {
+    // Swipe and R/G show both revisions at once: mark the part wherever it
+    // exists, at its head location when it is on both sides.
+    if (mode === 'rg' || mode === 'swipe') return c.fh || c.fb || null;
+    const baseShown = mode === 'base' ||
+      (mode === 'blink' && !stage.classList.contains('blink-head'));
+    return (baseShown ? c.fb : c.fh) || null;
+  }
+  function refreshMarker() {
+    if (!markerChange) return;
+    markerFrac = markerFracFor(markerChange);
+    marker.hidden = !markerFrac;
+    updateMarker();
+  }
+  // Mirror view flips the layers around the stage midline; flip marker
+  // x the same way so the ring stays on the part.
+  function dispX(fx) {
+    return stage.classList.contains('mirrored') ? 1 - fx : fx;
+  }
+  function updateMarker() {
+    if (!markerFrac) return;
+    marker.style.left = `${tx + dispX(markerFrac[0]) * stage.offsetWidth * scale}px`;
+    marker.style.top = `${ty + markerFrac[1] * stage.offsetHeight * scale}px`;
+  }
+  function hideMarker() {
+    markerChange = null;
+    markerFrac = null;
+    marker.hidden = true;
+  }
+  // Pan so the marker sits centered, keeping the current zoom (re-running
+  // the focus zoom would stomp a manually chosen one).
+  function centerMarker() {
+    const wrapW = stageWrap.clientWidth;
+    const wrapH = stageWrap.clientHeight;
+    if (!markerFrac || !wrapW || !wrapH || !stage.offsetWidth) return;
+    tx = wrapW / 2 - dispX(markerFrac[0]) * stage.offsetWidth * scale;
+    ty = wrapH / 2 - markerFrac[1] * stage.offsetHeight * scale;
+    applyTransform();
   }
 
   function resetView() {
@@ -121,6 +171,28 @@
   refitter.observe(stage);
   refitter.observe(stageWrap);
 
+  // Run `action` once the size-driving image of the current page is ready.
+  // The layers load asynchronously, so acting right away would measure the
+  // previous page; wait for the decode when the image is not cached yet.
+  // The generation counter drops stale actions when the user has already
+  // moved on.
+  let readyGen = 0;
+  function whenStageReady(action) {
+    const gen = ++readyGen;
+    const driver = layerBase.getAttribute('src') ? layerBase : layerHead;
+    if (!driver.getAttribute('src') || driver.complete) {
+      action();
+      return;
+    }
+    const onDone = () => {
+      driver.removeEventListener('load', onDone);
+      driver.removeEventListener('error', onDone);
+      if (gen === readyGen) action();
+    };
+    driver.addEventListener('load', onDone);
+    driver.addEventListener('error', onDone);
+  }
+
   // Blink mode alternates base/head by toggling a class on the stage.
   let blinkTimer = null;
   function stopBlink() {
@@ -133,6 +205,9 @@
     blinkTimer = setInterval(() => {
       showHead = !showHead;
       stage.classList.toggle('blink-head', showHead);
+      // The marked part may sit elsewhere (or on one side only); follow the
+      // revision being flashed.
+      refreshMarker();
     }, 500);
   }
 
@@ -144,6 +219,17 @@
     modeButtons.forEach((b) => b.classList.toggle('active', b.dataset.mode === m));
     stopBlink();
     if (m === 'blink') startBlink();
+    // The marked part may sit elsewhere (or not exist) on the newly shown
+    // revision; follow it. When its location changed (or it just appeared),
+    // also pan there so comparing sides never needs a re-click. A part that
+    // stayed put keeps the view still, as does blink, whose marker
+    // alternates instead.
+    const before = markerFrac;
+    refreshMarker();
+    const movedTo = markerFrac &&
+      (!before || markerFrac[0] !== before[0] || markerFrac[1] !== before[1]);
+    if (movedTo) centerMarker();
+    updateHash();
   }
 
   // Change currently active layer.
@@ -208,8 +294,152 @@
     for (let el = li.parentElement; el; el = el.parentElement) {
       if (el.tagName === 'DETAILS' && !el.open) el.open = true;
     }
-    applyAvailability(entries[idx]);
+    const entry = entries[idx];
+    hideMarker();
+    // A manually chosen page no longer matches the focused change; drop the
+    // stale row highlight (goToChange re-applies it after selecting).
+    changeLis.forEach((li) => li.classList.remove('active'));
+    changeShown = false;
+    applyAvailability(entry);
     fitWhenReady();
+    updateHash();
+  }
+
+  // The URL hash mirrors the view - page, focused change, compare mode - so
+  // the address bar is always a shareable link to what is on screen. Changes
+  // are addressed by reference + detail, which survives report regeneration
+  // (row numbers do not); a link whose target no longer exists just opens
+  // the report normally.
+  let changeShown = false;
+  const pageKey = (e) => `${e.project}/${e.kind}/${e.name}`;
+  function updateHash() {
+    if (activeIdx === null) return;
+    const params = new URLSearchParams();
+    params.set('p', pageKey(entries[activeIdx]));
+    const c = changeShown ? allChanges[activeChange] : null;
+    if (c) params.set('c', `${c.ref}|${c.detail}`);
+    params.set('m', mode);
+    history.replaceState(null, '', `#${params.toString()}`);
+  }
+  function applyHash() {
+    const params = new URLSearchParams(location.hash.slice(1));
+    const pageIdx = entries.findIndex((e) => pageKey(e) === params.get('p'));
+    const key = params.get('c');
+    const changeIdx = key === null ? -1 : allChanges.findIndex(
+      (c) => `${c.ref}|${c.detail}` === key
+        && (pageIdx < 0 || c.project === entries[pageIdx].project),
+    );
+    if (changeIdx >= 0 && changeHome(allChanges[changeIdx]) >= 0) {
+      goToChange(changeIdx);
+    } else {
+      select(pageIdx >= 0 ? pageIdx : 0);
+    }
+    const m = params.get('m');
+    if (m) {
+      const btn = [...modeButtons].find((b) => b.dataset.mode === m);
+      if (btn && !btn.disabled) setMode(m);
+    }
+  }
+  window.addEventListener('hashchange', applyHash);
+
+  // Semantic (part-level) changes nest under the page they happened on, as a
+  // collapsed group behind a summary line. Clicking a change row (or stepping
+  // with n/p, which expands the group it enters) jumps to that page, zooms in
+  // on the location, and shows the pulsing marker.
+  const CHANGE_LETTERS = { added: 'A', removed: 'R', renamed: 'N', moved: 'M', flipped: 'S', value: 'V', footprint: 'F', property: 'P', net: 'C' };
+  const CHANGE_BADGES = { added: 'added', removed: 'removed', net: 'net' }; // rest fall back to "modified" colors
+  const allChanges = typeof changes !== 'undefined' ? changes : [];
+  let activeChange = -1;
+  const changeLis = new Map();    // change index -> its row
+  const changeGroups = new Map(); // entry index -> its group's DOM + open state
+  const changeOrder = [];         // change indices in sidebar order, walked by n/p
+
+  // The page a change lives under in the sidebar, which is also where
+  // clicking it navigates: the sheet for schematic changes, the part's copper
+  // layer for board changes (or the board's first layer when that page is not
+  // in the report).
+  function changeHome(c) {
+    if (c.scope === 'sch') {
+      return entries.findIndex((e) => e.project === c.project && e.kind === 'sch' && e.name === c.sheet);
+    }
+    const layerPage = entries.findIndex(
+      (e) => e.project === c.project && e.kind === 'pcb' && e.name === c.layer,
+    );
+    if (layerPage >= 0) return layerPage;
+    return entries.findIndex((e) => e.project === c.project && e.kind === 'pcb');
+  }
+
+  function setGroupOpen(idx, open) {
+    const g = changeGroups.get(idx);
+    if (!g || g.open === open) return;
+    g.open = open;
+    g.row.classList.toggle('open', open);
+    g.summary.hidden = open;
+    g.items.hidden = !open;
+  }
+
+  function highlightChange() {
+    changeLis.forEach((li, idx) => li.classList.toggle('active', idx === activeChange));
+    const li = changeLis.get(activeChange);
+    if (li) li.scrollIntoView({ block: 'nearest' });
+  }
+
+  // Zoom in on the change location, centered, and show the marker there.
+  // A part that does not exist on the displayed revision can only be looked
+  // at on the other one; switch to it. Blink keeps alternating instead and
+  // the marker flashes along with the side the part exists on. Focusing
+  // takes over the view like a manual zoom does.
+  function focusChange(c) {
+    pendingFit = false;
+    let frac = markerFracFor(c);
+    if (!frac && (c.fb || c.fh)) {
+      if (mode === 'blink') {
+        frac = c.fb || c.fh;
+      } else {
+        setMode(c.fb ? 'base' : 'head');
+        frac = markerFracFor(c);
+      }
+    }
+    if (!frac) {
+      hideMarker();
+      return;
+    }
+    const stageW = stage.offsetWidth;
+    const stageH = stage.offsetHeight;
+    const wrapW = stageWrap.clientWidth;
+    const wrapH = stageWrap.clientHeight;
+    if (!stageW || !stageH || !wrapW || !wrapH) return;
+    const fitK = Math.min(wrapW / stageW, wrapH / stageH) * 0.96;
+    scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, fitK * 4));
+    tx = wrapW / 2 - dispX(frac[0]) * stageW * scale;
+    ty = wrapH / 2 - frac[1] * stageH * scale;
+    markerChange = c;
+    refreshMarker();
+    applyTransform();
+  }
+
+  function goToChange(i) {
+    const c = allChanges[i];
+    if (!c) return;
+    const target = changeHome(c);
+    if (target < 0) return;
+    activeChange = i;
+    setGroupOpen(target, true);
+    if (target !== activeIdx) select(target);
+    highlightChange();
+    whenStageReady(() => focusChange(c));
+    changeShown = true;
+    updateHash();
+  }
+
+  // Clicking the focused change again releases it: the marker stops pulsing
+  // and the row highlight drops. The view stays where it is.
+  function clearChange() {
+    activeChange = -1;
+    changeShown = false;
+    hideMarker();
+    highlightChange();
+    updateHash();
   }
 
   // Swipe interaction: move cursor over stage to drag the divider.
@@ -280,19 +510,20 @@
   // Double-click anywhere on the stage fits the page to the viewport.
   stageWrap.addEventListener('dblclick', () => fitView());
 
+  function toggleMirror() {
+    const on = stage.classList.toggle('mirrored');
+    mirrorToggle.classList.toggle('active', on);
+    mirrorToggle.setAttribute('aria-pressed', on ? 'true' : 'false');
+    updateMarker();
+  }
+  mirrorToggle.addEventListener('click', toggleMirror);
+
   // Mode buttons
   modeButtons.forEach((b) => {
     b.addEventListener('click', () => {
       if (!b.disabled) setMode(b.dataset.mode);
     });
   });
-
-  function toggleMirror() {
-    const on = stage.classList.toggle('mirrored');
-    mirrorToggle.classList.toggle('active', on);
-    mirrorToggle.setAttribute('aria-pressed', on ? 'true' : 'false');
-  }
-  mirrorToggle.addEventListener('click', toggleMirror);
 
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
@@ -310,6 +541,15 @@
       fitView();
     } else if (e.key === 'm') {
       toggleMirror();
+    } else if (e.key === 'n' || e.key === 'p') {
+      if (changeOrder.length) {
+        const pos = changeOrder.indexOf(activeChange);
+        const len = changeOrder.length;
+        const at = pos < 0
+          ? (e.key === 'n' ? 0 : len - 1)
+          : (e.key === 'n' ? (pos + 1) % len : (pos - 1 + len) % len);
+        goToChange(changeOrder[at]);
+      }
     } else if (e.key === 'ArrowDown' || e.key === 'j') {
       if (activeIdx !== null && activeIdx + 1 < entries.length) select(activeIdx + 1);
     } else if (e.key === 'ArrowUp' || e.key === 'k') {
@@ -321,6 +561,133 @@
     document.querySelector('main').innerHTML =
       '<div class="nothing">No visual changes between the selected revisions.</div>';
     return;
+  }
+
+  // Changes by the page they nest under. The sneaky ones lead each group:
+  // properties (a different part gets mounted, no pixel moved), then net
+  // rewires, then everything visible.
+  const changesByPage = new Map();
+  allChanges.forEach((c, i) => {
+    const home = changeHome(c);
+    if (home < 0) return;
+    if (!changesByPage.has(home)) changesByPage.set(home, []);
+    changesByPage.get(home).push(i);
+  });
+  const KIND_RANK = { property: 0, net: 1 };
+  const rank = (i) => KIND_RANK[allChanges[i].kind] ?? 2;
+  changesByPage.forEach((idxs) => idxs.sort((x, y) => rank(x) - rank(y) || x - y));
+
+  // The group under one page row: a count chip and a chevron on the row
+  // itself, then a summary line ("N changes · NN% of parts changed") that
+  // expands into the individual change rows. The percentage counts unique
+  // references with part changes against the parts on the page; net-only
+  // groups get no percentage (nets have no such denominator).
+  function appendChangeGroup(container, row, entryIdx, entry, idxs) {
+    const chip = document.createElement('span');
+    chip.className = 'count-chip';
+    chip.textContent = idxs.length;
+    const chevron = document.createElement('span');
+    chevron.className = 'chevron';
+    chevron.textContent = '▸';
+    row.appendChild(chip);
+    row.appendChild(chevron);
+
+    const changedRefs = new Set();
+    for (const ci of idxs) {
+      const c = allChanges[ci];
+      if (c.kind !== 'net') changedRefs.add(c.ref);
+    }
+    let text = idxs.length === 1 ? '1 change' : `${idxs.length} changes`;
+    if (changedRefs.size && entry.parts) {
+      // Board changes falling back to this page (their own layer is not in
+      // the report) can push the count past this page's own part total.
+      const pct = Math.min(100, Math.round((100 * changedRefs.size) / entry.parts));
+      text += ` · ${pct}% of parts changed`;
+    }
+    const summary = document.createElement('div');
+    summary.className = 'group-summary';
+    summary.textContent = text;
+
+    const items = document.createElement('ul');
+    items.className = 'group-items';
+    items.hidden = true;
+
+    // Arrows: details carry ASCII "->" (they double as share-link keys);
+    // render the separator as an arrow. No badgeCls skips the badge.
+    const makeRow = (badgeCls, letter, kind, text, cls) => {
+      const li = document.createElement('li');
+      li.className = cls;
+      if (badgeCls) {
+        const badge = document.createElement('span');
+        badge.className = 'badge ' + badgeCls;
+        badge.textContent = letter;
+        badge.title = kind;
+        li.appendChild(badge);
+      }
+      const label = document.createElement('span');
+      label.className = 'path';
+      label.textContent = text.replace(/ -> /g, ' → ');
+      label.title = label.textContent;
+      li.appendChild(label);
+      items.appendChild(li);
+      return li;
+    };
+    // Clicking a row focuses its change; clicking it again releases it.
+    const wireRow = (li, ci) => {
+      li.onclick = () => {
+        if (activeChange === ci && changeShown) clearChange();
+        else goToChange(ci);
+      };
+    };
+
+    // Changes render as a tree: one header row per part, its changes
+    // indented beneath as detail rows. `idxs` comes sneakiest-first, so
+    // insertion order ranks each part by its sneakiest change and keeps
+    // that order within the part too. The header badge carries the part's
+    // status - added/removed parts repeat it on every detail row, so those
+    // rows drop the badge instead.
+    const byRef = new Map();
+    for (const ci of idxs) {
+      const ref = allChanges[ci].ref;
+      if (!byRef.has(ref)) byRef.set(ref, []);
+      byRef.get(ref).push(ci);
+    }
+    for (const [ref, cis] of byRef) {
+      const kinds = new Set(cis.map((ci) => allChanges[ci].kind));
+      const status = kinds.has('added') ? 'added'
+        : kinds.has('removed') ? 'removed' : 'modified';
+      // The header stands in for its sneakiest change.
+      const head = makeRow(status, BADGE_LETTERS[status], status, ref, 'part-head');
+      wireRow(head, cis[0]);
+      for (const ci of cis) {
+        const c = allChanges[ci];
+        // A change with nothing to say beyond the header (removed parts)
+        // is the header row itself.
+        let li = head;
+        if (c.detail) {
+          li = makeRow(c.kind === status ? null : CHANGE_BADGES[c.kind] || 'modified',
+            CHANGE_LETTERS[c.kind], c.kind, c.detail, 'part-sub');
+          wireRow(li, ci);
+        }
+        changeLis.set(ci, li);
+        changeOrder.push(ci);
+      }
+    }
+
+    const holder = document.createElement('li');
+    holder.className = 'change-group';
+    holder.appendChild(summary);
+    holder.appendChild(items);
+    container.appendChild(holder);
+
+    changeGroups.set(entryIdx, { row, summary, items, open: false });
+    const toggle = (ev) => {
+      ev.stopPropagation(); // the row click underneath selects the page
+      setGroupOpen(entryIdx, !changeGroups.get(entryIdx).open);
+    };
+    chip.onclick = toggle;
+    chevron.onclick = toggle;
+    summary.onclick = () => setGroupOpen(entryIdx, true);
   }
 
   const KIND_LABELS = { sch: 'Schematics', pcb: 'PCB layers', fp: 'Footprints', sym: 'Symbols' };
@@ -370,10 +737,11 @@
         li.onclick = () => select(idx);
         kindSec.body.appendChild(li);
         liElements[idx] = li;
+        if (changesByPage.has(idx)) appendChangeGroup(kindSec.body, li, idx, e, changesByPage.get(idx));
       }
     }
   }
-  select(0);
+  applyHash();
 
   // Warm an in-memory cache of every layer SVG so switching pages - between
   // layers, and between PCB and schematic views - is instant. The viewer reuses

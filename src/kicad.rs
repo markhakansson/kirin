@@ -8,6 +8,10 @@ use std::{
 use anyhow::{Context, Result};
 use gix::ObjectId;
 
+use crate::ids::{PageName, ProjectLabel};
+use crate::netlist;
+use crate::semantic::{self, Change};
+
 /// Non-copper layers diffed by default (copper layers are always included).
 /// Canonical (file-format) names, as accepted by `kicad-cli -l`.
 const DEFAULT_EXTRA_LAYERS: &[&str] = &[
@@ -46,6 +50,9 @@ pub enum Status {
     Modified,
     Added,
     Removed,
+    /// Visually identical, kept only because a semantic change points at it
+    /// (a pin's net rewired from another sheet leaves no pixel behind).
+    Unchanged,
 }
 
 impl Status {
@@ -54,6 +61,7 @@ impl Status {
             Status::Modified => "modified",
             Status::Added => "added",
             Status::Removed => "removed",
+            Status::Unchanged => "unchanged",
         }
     }
 }
@@ -61,10 +69,10 @@ impl Status {
 /// A single diffable page in the report (one schematic sheet or one PCB layer).
 pub struct Page {
     /// Sidebar group label (the project's repo-relative dir, or its name at the root).
-    pub project: String,
+    pub project: ProjectLabel,
     pub kind: Kind,
     /// Human-facing name ("Root sheet", "Power Switch", a layer name, ...).
-    pub name: String,
+    pub name: PageName,
     /// SVG path relative to a side's `svg/` root, used to build `a/svg/<rel>` and `b/svg/<rel>`.
     pub rel: String,
     pub status: Status,
@@ -74,6 +82,10 @@ pub struct Page {
     /// shows each revision with its own outline.
     pub edge_base: Option<String>,
     pub edge_head: Option<String>,
+    /// Parts on this page (unique references, union of both sides), for
+    /// schematic sheets and copper layers; the denominator behind the
+    /// viewer's "% of parts changed" summaries.
+    pub parts: Option<usize>,
 }
 
 /// A KiCAD project, identified by its `.kicad_pro` file.
@@ -86,13 +98,27 @@ pub struct Project {
 
 impl Project {
     /// Sidebar label: the dir, or the bare name when the project sits at the repo root.
-    fn label(&self) -> String {
+    fn label(&self) -> ProjectLabel {
         if self.dir.as_os_str().is_empty() {
-            self.name.clone()
+            self.name.clone().into()
         } else {
-            self.dir.to_string_lossy().into_owned()
+            self.dir.to_string_lossy().into_owned().into()
         }
     }
+}
+
+/// One `kicad-cli` invocation: the closure adds the subcommand arguments,
+/// `subject` is the file a failure should point at.
+pub fn run_kicad_cli(subject: &Path, args: impl FnOnce(&mut Command)) -> Result<()> {
+    let mut cmd = Command::new("kicad-cli");
+    args(&mut cmd);
+    let status = cmd
+        .status()
+        .context("failed to invoke 'kicad-cli' - is KiCAD installed and on PATH?")?;
+    if !status.success() {
+        anyhow::bail!("kicad-cli failed for '{}'", subject.display());
+    }
+    Ok(())
 }
 
 /// All blob paths (repo-relative) and their object ids at `commit_ref`.
@@ -143,21 +169,22 @@ pub fn discover_projects(
         .collect()
 }
 
-/// Render and classify every changed page of one project. Returns only pages
-/// that actually differ visually (added / removed / modified).
+/// Render and classify every changed page of one project, plus the semantic
+/// (part-level) changes. Returns only pages that actually differ visually
+/// (added / removed / modified).
 pub fn process_project(
     repo: &gix::Repository,
     base: &[(PathBuf, ObjectId)],
     head: &[(PathBuf, ObjectId)],
     project: &Project,
     out: &Path,
-) -> Result<Vec<Page>> {
+) -> Result<(Vec<Page>, Vec<Change>)> {
     let sch_changed = sch_oids(base, &project.dir) != sch_oids(head, &project.dir);
     let pcb_rel = project.dir.join(format!("{}.kicad_pcb", project.name));
     let pcb_changed = oid_of(base, &pcb_rel) != oid_of(head, &pcb_rel);
 
     if !sch_changed && !pcb_changed {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
 
     let work = out.join(".work");
@@ -167,13 +194,111 @@ pub fn process_project(
     materialize(repo, head, &project.dir, &work_b)?;
 
     let mut pages = Vec::new();
+    let mut changes = Vec::new();
     if sch_changed {
-        pages.extend(render_schematics(project, &work_a, &work_b, out)?);
+        let mut sch_pages = render_schematics(project, &work_a, &work_b, out)?;
+        let sch_rel = project.dir.join(format!("{}.kicad_sch", project.name));
+        let root_a = work_a.join(&sch_rel);
+        let root_b = work_b.join(&sch_rel);
+        // Connectivity can only be compared when the project exists on both
+        // revisions; otherwise the part diff already says everything.
+        let nets = if root_a.is_file() && root_b.is_file() {
+            let name = sanitize(project.label().as_ref());
+            Some((
+                netlist::export_netlist(&root_a, &work.join(format!("{name}-a.net")))?,
+                netlist::export_netlist(&root_b, &work.join(format!("{name}-b.net")))?,
+            ))
+        } else {
+            None
+        };
+        let (mut sch_changes, sheet_parts) = semantic::diff_schematics(
+            &project.label(),
+            &root_a,
+            &root_b,
+            nets.as_ref().map(|(a, b)| (a.as_slice(), b.as_slice())),
+        )?;
+        localize_sch_changes(&mut sch_changes, project, out);
+        // Visually identical sheets earn a page only when a change (a pin
+        // rewired from another sheet) needs somewhere to navigate to.
+        let referenced: BTreeSet<_> = sch_changes
+            .iter()
+            .filter_map(|c| c.sheet.as_ref())
+            .collect();
+        sch_pages.retain(|p| p.status != Status::Unchanged || referenced.contains(&p.name));
+        for page in &mut sch_pages {
+            page.parts = sheet_parts.get(&page.name).copied();
+        }
+        pages.extend(sch_pages);
+        changes.extend(sch_changes);
     }
     if pcb_changed {
-        pages.extend(render_pcb(project, &work_a, &work_b, out)?);
+        let mut pcb_pages = render_pcb(project, &work_a, &work_b, out)?;
+        let (pcb_changes, layer_parts) = semantic::diff_pcb(
+            &project.label(),
+            &work_a.join(&pcb_rel),
+            &work_b.join(&pcb_rel),
+        )?;
+        for page in &mut pcb_pages {
+            page.parts = layer_parts.get(&page.name).copied();
+        }
+        pages.extend(pcb_pages);
+        changes.extend(pcb_changes);
     }
-    Ok(pages)
+    Ok((pages, changes))
+}
+
+/// Convert schematic change locations (sheet millimeters) into fractions of
+/// the sheet's exported SVG extent, so the viewer can place markers. Sheet
+/// SVGs cover the full page from the origin, so the fraction is just mm over
+/// the viewBox size, read from each side's exported file (falling back to
+/// the other side when a page only exists on one).
+fn localize_sch_changes(changes: &mut [Change], project: &Project, out: &Path) {
+    let folder = sanitize(project.label().as_ref());
+    let mut sizes = BTreeMap::new();
+    for change in changes {
+        let Some(sheet) = change.sheet.clone() else {
+            continue;
+        };
+        let file = if sheet.as_ref() == "Root sheet" {
+            format!("{}.svg", project.name)
+        } else {
+            format!("{}-{}.svg", project.name, sheet)
+        };
+        let mut frac = |at: Option<[f64; 2]>, sides: [&'static str; 2]| {
+            let [x, y] = at?;
+            let size = sizes.entry((sheet.clone(), sides[0])).or_insert_with(|| {
+                sides.iter().find_map(|side| {
+                    svg_view_size(
+                        &out.join(side)
+                            .join("svg")
+                            .join(&folder)
+                            .join("sch")
+                            .join(&file),
+                    )
+                })
+            });
+            let [w, h] = (*size)?;
+            (w > 0.0 && h > 0.0).then(|| [x / w, y / h])
+        };
+        change.frac_base = frac(change.at_base, ["a", "b"]);
+        change.frac_head = frac(change.at_head, ["b", "a"]);
+    }
+}
+
+/// The width/height of an SVG's viewBox, from the file's leading bytes.
+fn svg_view_size(path: &Path) -> Option<[f64; 2]> {
+    let mut head = vec![0; 2048];
+    let mut file = fs::File::open(path).ok()?;
+    let n = std::io::Read::read(&mut file, &mut head).ok()?;
+    let head = String::from_utf8_lossy(&head[..n]).into_owned();
+    let rest = head.split("viewBox=\"").nth(1)?;
+    let mut nums = rest
+        .split('"')
+        .next()?
+        .split_ascii_whitespace()
+        .filter_map(|v| v.parse::<f64>().ok());
+    let (_, _, w, h) = (nums.next()?, nums.next()?, nums.next()?, nums.next()?);
+    Some([w, h])
 }
 
 /// Map of `.kicad_sch` path -> oid under `dir` (used to detect schematic changes).
@@ -203,8 +328,11 @@ fn materialize(
         if !path.starts_with(dir) {
             continue;
         }
+        // The project file must ride along: without it kicad-cli resolves
+        // hierarchical connectivity into per-sheet net fragments, breaking
+        // the netlist comparison.
         match path.extension().and_then(|e| e.to_str()) {
-            Some("kicad_sch") | Some("kicad_pcb") => {}
+            Some("kicad_sch") | Some("kicad_pcb") | Some("kicad_pro") => {}
             _ => continue,
         }
         let obj = repo.find_object(*oid)?;
@@ -229,7 +357,7 @@ pub fn process_footprint_libs(
 ) -> Result<Vec<Page>> {
     // Library dir -> footprint file -> oid, for one side.
     let collect = |blobs: &[(PathBuf, ObjectId)]| {
-        let mut libs: BTreeMap<PathBuf, BTreeMap<PathBuf, ObjectId>> = BTreeMap::new();
+        let mut libs: BTreeMap<_, BTreeMap<_, _>> = BTreeMap::new();
         for (path, oid) in blobs {
             if path.extension().and_then(|e| e.to_str()) != Some("kicad_mod") {
                 continue;
@@ -253,7 +381,7 @@ pub fn process_footprint_libs(
     let libs_b = collect(head);
 
     let mut pages = Vec::new();
-    let lib_dirs: BTreeSet<&PathBuf> = libs_a.keys().chain(libs_b.keys()).collect();
+    let lib_dirs: BTreeSet<_> = libs_a.keys().chain(libs_b.keys()).collect();
     for lib in lib_dirs {
         let empty = BTreeMap::new();
         let side_a = libs_a.get(lib).unwrap_or(&empty);
@@ -273,7 +401,6 @@ pub fn process_footprint_libs(
 
         let label = lib.to_string_lossy().into_owned();
         let folder = sanitize(&label);
-        let rel_dir = format!("{folder}/fp");
         let work = out.join(".work");
         let render = |side: &str, files: &[(PathBuf, ObjectId)]| -> Result<BTreeSet<String>> {
             let svg_dir = out.join(side).join("svg").join(&folder).join("fp");
@@ -287,33 +414,49 @@ pub fn process_footprint_libs(
         };
         let files_a = render("a", &changed_a)?;
         let files_b = render("b", &changed_b)?;
+        pages.extend(library_pages(
+            &label,
+            Kind::Fp,
+            &folder,
+            out,
+            &files_a,
+            &files_b,
+            |f| f.strip_suffix(".svg").unwrap_or(f).to_string(),
+        )?);
+    }
+    Ok(pages)
+}
 
-        for file in files_a.union(&files_b) {
-            let bp = files_a.contains(file).then(|| {
-                out.join("a")
-                    .join("svg")
-                    .join(&folder)
-                    .join("fp")
-                    .join(file)
+/// Pages for the union of two sides' exported library SVGs, keeping only
+/// files that differ visually; `name` derives the page title from a file.
+fn library_pages(
+    project: &str,
+    kind: Kind,
+    folder: &str,
+    out: &Path,
+    files_a: &BTreeSet<String>,
+    files_b: &BTreeSet<String>,
+    name: impl Fn(&str) -> String,
+) -> Result<Vec<Page>> {
+    let sub = kind.as_str();
+    let mut pages = Vec::new();
+    for file in files_a.union(files_b) {
+        let side = |s: &str, present: bool| {
+            present.then(|| out.join(s).join("svg").join(folder).join(sub).join(file))
+        };
+        let bp = side("a", files_a.contains(file));
+        let hp = side("b", files_b.contains(file));
+        if let Some(status) = classify(bp.as_deref(), hp.as_deref())? {
+            pages.push(Page {
+                project: project.into(),
+                kind,
+                name: name(file).into(),
+                rel: format!("{folder}/{sub}/{file}"),
+                status,
+                edge_base: None,
+                edge_head: None,
+                parts: None,
             });
-            let hp = files_b.contains(file).then(|| {
-                out.join("b")
-                    .join("svg")
-                    .join(&folder)
-                    .join("fp")
-                    .join(file)
-            });
-            if let Some(status) = classify(bp.as_deref(), hp.as_deref())? {
-                pages.push(Page {
-                    project: label.clone(),
-                    kind: Kind::Fp,
-                    name: file.strip_suffix(".svg").unwrap_or(file).to_string(),
-                    rel: format!("{rel_dir}/{file}"),
-                    status,
-                    edge_base: None,
-                    edge_head: None,
-                });
-            }
         }
     }
     Ok(pages)
@@ -343,7 +486,7 @@ pub fn process_symbol_libs(
     let libs_b = collect(head);
 
     let mut pages = Vec::new();
-    let libs: BTreeSet<&PathBuf> = libs_a.keys().chain(libs_b.keys()).collect();
+    let libs: BTreeSet<_> = libs_a.keys().chain(libs_b.keys()).collect();
     for lib in libs {
         let oid_a = libs_a.get(lib);
         let oid_b = libs_b.get(lib);
@@ -353,7 +496,6 @@ pub fn process_symbol_libs(
 
         let label = lib.to_string_lossy().into_owned();
         let folder = sanitize(&label);
-        let rel_dir = format!("{folder}/sym");
         let work = out.join(".work");
         let render = |side: &str, oid: Option<&ObjectId>| -> Result<BTreeSet<String>> {
             let Some(oid) = oid else {
@@ -371,34 +513,16 @@ pub fn process_symbol_libs(
         let files_a = render("a", oid_a)?;
         let files_b = render("b", oid_b)?;
 
-        let union: BTreeSet<&String> = files_a.union(&files_b).collect();
-        for file in &union {
-            let bp = files_a.contains(*file).then(|| {
-                out.join("a")
-                    .join("svg")
-                    .join(&folder)
-                    .join("sym")
-                    .join(file)
-            });
-            let hp = files_b.contains(*file).then(|| {
-                out.join("b")
-                    .join("svg")
-                    .join(&folder)
-                    .join("sym")
-                    .join(file)
-            });
-            if let Some(status) = classify(bp.as_deref(), hp.as_deref())? {
-                pages.push(Page {
-                    project: label.clone(),
-                    kind: Kind::Sym,
-                    name: symbol_name(file, &union),
-                    rel: format!("{rel_dir}/{file}"),
-                    status,
-                    edge_base: None,
-                    edge_head: None,
-                });
-            }
-        }
+        let union: BTreeSet<_> = files_a.union(&files_b).collect();
+        pages.extend(library_pages(
+            &label,
+            Kind::Sym,
+            &folder,
+            out,
+            &files_a,
+            &files_b,
+            |f| symbol_name(f, &union),
+        )?);
     }
     Ok(pages)
 }
@@ -406,17 +530,12 @@ pub fn process_symbol_libs(
 /// Run `kicad-cli <fp|sym> export svg` on one library, into `svg_dir`.
 fn export_library_svgs(kind: &str, library: &Path, svg_dir: &Path) -> Result<()> {
     fs::create_dir_all(svg_dir)?;
-    let status = Command::new("kicad-cli")
-        .arg(kind)
-        .args(["export", "svg", "-o"])
-        .arg(svg_dir)
-        .arg(library)
-        .status()
-        .context("failed to invoke 'kicad-cli' - is KiCAD installed and on PATH?")?;
-    if !status.success() {
-        anyhow::bail!("kicad-cli failed for '{}'", library.display());
-    }
-    Ok(())
+    run_kicad_cli(library, |c| {
+        c.arg(kind)
+            .args(["export", "svg", "-o"])
+            .arg(svg_dir)
+            .arg(library);
+    })
 }
 
 /// Friendly symbol page name: `Foo_unit2.svg` -> `Foo unit 2`, with the unit
@@ -465,7 +584,7 @@ fn render_schematics(
     work_b: &Path,
     out: &Path,
 ) -> Result<Vec<Page>> {
-    let folder = sanitize(&project.label());
+    let folder = sanitize(project.label().as_ref());
     let rel_dir = format!("{folder}/sch");
 
     let base = export_sch_side(
@@ -488,8 +607,8 @@ fn render_schematics(
         }
     };
 
-    let files: BTreeSet<&String> = base.keys().chain(head.keys()).collect();
-    let mut named: Vec<(String, &String)> = files
+    let files: BTreeSet<_> = base.keys().chain(head.keys()).collect();
+    let mut named: Vec<_> = files
         .into_iter()
         .map(|file| (sheet_name(file, &project.name), file))
         .collect();
@@ -499,17 +618,19 @@ fn render_schematics(
     for (name, file) in named {
         let bp = base.get(file).map(|p| p.as_path());
         let hp = head.get(file).map(|p| p.as_path());
-        if let Some(status) = classify(bp, hp)? {
-            pages.push(Page {
-                project: project.label(),
-                kind: Kind::Sch,
-                name,
-                rel: format!("{rel_dir}/{file}"),
-                status,
-                edge_base: None,
-                edge_head: None,
-            });
-        }
+        // Unchanged sheets stay too: the caller keeps the ones semantic
+        // changes point at, so the viewer has a page to navigate to.
+        let status = classify(bp, hp)?.unwrap_or(Status::Unchanged);
+        pages.push(Page {
+            project: project.label(),
+            kind: Kind::Sch,
+            name: name.into(),
+            rel: format!("{rel_dir}/{file}"),
+            status,
+            edge_base: None,
+            edge_head: None,
+            parts: None,
+        });
     }
     Ok(pages)
 }
@@ -528,18 +649,11 @@ fn export_sch_side(
         return Ok(BTreeMap::new());
     }
     fs::create_dir_all(svg_dir)?;
-
-    let status = Command::new("kicad-cli")
-        .args(["sch", "export", "svg", "--no-background-color"])
-        .arg("-o")
-        .arg(svg_dir)
-        .arg(&root)
-        .status()
-        .context("failed to invoke 'kicad-cli' - is KiCAD installed and on PATH?")?;
-    if !status.success() {
-        anyhow::bail!("kicad-cli failed for '{}'", root.display());
-    }
-
+    run_kicad_cli(&root, |c| {
+        c.args(["sch", "export", "svg", "--no-background-color", "-o"])
+            .arg(svg_dir)
+            .arg(&root);
+    })?;
     list_svgs(svg_dir)
 }
 
@@ -548,7 +662,7 @@ fn export_sch_side(
 /// board-outline context (rather than baked into every layer, which would make
 /// any outline change flip every layer).
 fn render_pcb(project: &Project, work_a: &Path, work_b: &Path, out: &Path) -> Result<Vec<Page>> {
-    let folder = sanitize(&project.label());
+    let folder = sanitize(project.label().as_ref());
     let rel_dir = format!("{folder}/pcb");
     let pcb_rel = project.dir.join(format!("{}.kicad_pcb", project.name));
 
@@ -594,7 +708,7 @@ fn render_pcb(project: &Project, work_a: &Path, work_b: &Path, out: &Path) -> Re
         .then(|| format!("b/svg/{folder}/pcb/{edge_file}"));
 
     // Union of produced files, in physical stackup order.
-    let mut files: Vec<String> = base_files.union(&head_files).cloned().collect();
+    let mut files: Vec<_> = base_files.union(&head_files).cloned().collect();
     files.sort_by_key(|f| layer_sort_key(&label_of(f)));
 
     let mut pages = Vec::new();
@@ -609,8 +723,9 @@ fn render_pcb(project: &Project, work_a: &Path, work_b: &Path, out: &Path) -> Re
                 // The outline page shows its own diff; it needs no extra context.
                 edge_base: (file != edge_file).then(|| edge_base.clone()).flatten(),
                 edge_head: (file != edge_file).then(|| edge_head.clone()).flatten(),
-                name: label_of(&file),
+                name: label_of(&file).into(),
                 status,
+                parts: None,
             });
         }
     }
@@ -633,8 +748,8 @@ fn side_layers(pcb: &Path) -> Result<Vec<String>> {
 /// excluded because its page-number field renders non-deterministically.
 fn export_pcb_side(pcb: &Path, layers: &[String], svg_dir: &Path) -> Result<()> {
     fs::create_dir_all(svg_dir)?;
-    let status = Command::new("kicad-cli")
-        .args([
+    run_kicad_cli(pcb, |c| {
+        c.args([
             "pcb",
             "export",
             "svg",
@@ -646,13 +761,8 @@ fn export_pcb_side(pcb: &Path, layers: &[String], svg_dir: &Path) -> Result<()> 
         .arg(layers.join(","))
         .arg("-o")
         .arg(svg_dir)
-        .arg(pcb)
-        .status()
-        .context("failed to invoke 'kicad-cli' - is KiCAD installed and on PATH?")?;
-    if !status.success() {
-        anyhow::bail!("kicad-cli failed for '{}'", pcb.display());
-    }
-    Ok(())
+        .arg(pcb);
+    })
 }
 
 /// Compare two rendered pages. `None` means visually identical (dropped from the report).

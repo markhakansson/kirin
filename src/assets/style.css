@@ -30,6 +30,7 @@
   --status-removed: #dc2626;
   --status-modified: #ca8a04;
   --status-unchanged: #9ca3af;
+  --status-net: #0d9488;
 
   /* Swipe divider */
   --divider: #ef4444;
@@ -66,6 +67,7 @@
   --status-removed: #ef4444;
   --status-modified: #eab308;
   --status-unchanged: #64748b;
+  --status-net: #14b8a6;
 }
 
 [data-theme="dark"] .hint kbd { background: var(--bg-emphasis); }
@@ -276,9 +278,105 @@ nav summary.project-header:hover { background: var(--border-strong); }
   font-weight: 600;
 }
 
+/* Semantic changes nest under their page row as a collapsed group: the row
+   carries a count chip and a chevron, a summary line sits beneath until
+   expanded into the individual change rows. */
+.count-chip {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 0 0.35rem;
+  border-radius: 0.6rem;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  background: var(--bg-emphasis);
+  color: var(--fg-muted);
+}
+nav li.active .count-chip { background: var(--bg); }
+.chevron {
+  flex-shrink: 0;
+  width: 0.7rem;
+  text-align: center;
+  color: var(--fg-muted);
+  font-size: 0.7rem;
+  transition: transform 0.15s ease;
+}
+nav li.open > .chevron { transform: rotate(90deg); }
+nav li.change-group {
+  display: block;
+  padding: 0;
+  cursor: default;
+}
+nav li.change-group:hover { background: transparent; }
+.group-summary {
+  padding: 0.1rem 1rem 0.35rem 2.4rem;
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+.group-summary:hover { color: var(--fg); }
+/* Change rows carry full net/value transitions; wrap instead of cutting
+   them off. */
+.group-items li {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  cursor: pointer;
+  padding: 0.25rem 1rem 0.25rem 2.4rem;
+  font-size: 0.8rem;
+}
+.group-items li:hover { background: var(--border); }
+.group-items li .badge { margin-top: 0.1rem; }
+/* pre-line: an added part lists what it brings one fact per line. */
+.group-items li .path { white-space: pre-line; overflow-wrap: anywhere; }
+.group-items li.active { background: var(--accent-subtle); font-weight: 600; }
+/* Each part: header row with its changes indented beneath. */
+.group-items li.part-sub { padding-left: 3.4rem; }
+
+/* Location marker for the focused semantic change. Positioned in stage-wrap
+   coordinates (not inside the transformed stage) so it keeps a constant
+   screen size at any zoom. The hue cycles because the page under it can be
+   any color (red copper would swallow a red ring), and the white/dark
+   hairlines guarantee an edge on any background. */
+.marker {
+  position: absolute;
+  z-index: 6;
+  width: 16px;
+  height: 16px;
+  /* left/top are the change's location; center the ring on it. */
+  transform: translate(-50%, -50%);
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  /* Faint edge so bright phases stay outlined on white sheets without
+     reading as a ring of its own. */
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  animation: marker-hue 2.4s linear infinite;
+}
+.marker::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  animation: marker-pulse 1.4s ease-out infinite;
+}
+@keyframes marker-hue {
+  0%, 100% { color: #ef4444; }
+  17% { color: #f59e0b; }
+  33% { color: #22c55e; }
+  50% { color: #06b6d4; }
+  67% { color: #3b82f6; }
+  83% { color: #d946ef; }
+}
+@keyframes marker-pulse {
+  0%   { transform: scale(1); opacity: 0.9; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+
 .badge.added     { background: var(--status-added); }
 .badge.removed   { background: var(--status-removed); }
 .badge.modified  { background: var(--status-modified); }
+.badge.net       { background: var(--status-net); }
 .badge.unchanged { background: var(--status-unchanged); }
 
 section.viewer {
