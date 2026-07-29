@@ -193,6 +193,42 @@ pub(super) fn sch_entities(root: &Path) -> Result<BTreeMap<EntityId, Entity>> {
     Ok(out)
 }
 
+/// Sheet display names by instance identity - the chain of sheet-block
+/// UUIDs from the root - walked like `sch_entities`. The chain survives a
+/// sheet being renamed or its file moving, which is what pairing needs.
+pub(super) fn sheet_names(root: &Path) -> Result<BTreeMap<String, PageName>> {
+    let mut out = BTreeMap::new();
+    if !root.is_file() {
+        return Ok(out);
+    }
+    let mut queue = vec![(root.to_path_buf(), String::new(), vec![])];
+    while let Some((path, chain, ancestry)) = queue.pop() {
+        if !path.is_file() || ancestry.contains(&path) {
+            continue;
+        }
+        let doc = SchematicFile::read(&path)
+            .map_err(|e| anyhow::anyhow!("{e:?}"))
+            .with_context(|| format!("failed to parse '{}'", path.display()))?;
+        let dir = path.parent().unwrap_or(Path::new(""));
+        for sheet in &doc.ast().sheets {
+            let (Some(name), Some(file), Some(uuid)) = (&sheet.name, &sheet.filename, &sheet.uuid)
+            else {
+                continue;
+            };
+            let key = if chain.is_empty() {
+                uuid.clone()
+            } else {
+                format!("{chain}/{uuid}")
+            };
+            out.insert(key.clone(), name.clone().into());
+            let mut ancestry = ancestry.clone();
+            ancestry.push(path.clone());
+            queue.push((dir.join(file), key, ancestry));
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::fixtures::{entities, instance};
