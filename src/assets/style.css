@@ -437,8 +437,8 @@ section.viewer {
   cursor: grab;
 }
 
-.stage-wrap.grabbing { cursor: grabbing; }
 .stage-wrap.swipe-cursor { cursor: ew-resize; }
+.stage-wrap.grabbing { cursor: grabbing; }
 
 .stage {
   position: absolute;

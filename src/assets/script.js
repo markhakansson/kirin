@@ -444,9 +444,10 @@
 
   // Swipe interaction: move cursor over stage to drag the divider.
   // Divider position is computed in stage's own coordinate space so it stays
-  // aligned regardless of zoom/pan.
+  // aligned regardless of zoom/pan. While panning the divider is left alone;
+  // it lives on the stage, so it follows the content under the drag.
   stageWrap.addEventListener('mousemove', (e) => {
-    if (mode !== 'swipe') return;
+    if (mode !== 'swipe' || dragging) return;
     const rect = stageWrap.getBoundingClientRect();
     const wrapX = e.clientX - rect.left;
     const stageX = (wrapX - tx) / scale;
@@ -484,11 +485,11 @@
     applyTransform();
   }, { passive: false });
 
-  // Drag to pan (disabled while in swipe mode, since the cursor drives the wipe).
+  // Drag to pan. Works in swipe mode too: hovering drives the wipe, so a
+  // held button can pan without fighting over the divider.
   let dragging = false;
   let dragOrigin = null;
   stageWrap.addEventListener('mousedown', (e) => {
-    if (mode === 'swipe') return;
     if (e.button !== 0 && e.button !== 1) return;
     if (e.button === 1) e.preventDefault();
     dragging = true;
