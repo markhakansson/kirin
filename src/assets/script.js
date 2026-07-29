@@ -329,7 +329,7 @@
       (c) => `${c.ref}|${c.detail}` === key
         && (pageIdx < 0 || c.project === entries[pageIdx].project),
     );
-    if (changeIdx >= 0 && changeHome(allChanges[changeIdx]) >= 0) {
+    if (changeIdx >= 0 && changePage.has(changeIdx)) {
       goToChange(changeIdx);
     } else {
       select(pageIdx >= 0 ? pageIdx : 0);
@@ -347,30 +347,14 @@
   // with n/p, which expands the group it enters) jumps to that page, zooms in
   // on the location, and shows the pulsing marker.
   const CHANGE_LETTERS = { added: 'A', removed: 'R', renamed: 'N', moved: 'M', flipped: 'S', value: 'V', footprint: 'F', property: 'P', net: 'C' };
-  const CHANGE_BADGES = { added: 'added', removed: 'removed', net: 'net' }; // rest fall back to "modified" colors
-  const allChanges = typeof changes !== 'undefined' ? changes : [];
+  const allChanges = changes;
   let activeChange = -1;
-  const changeLis = new Map();    // change index -> its row
-  const changeGroups = new Map(); // entry index -> its group's DOM + open state
-  const changeOrder = [];         // change indices in sidebar order, walked by n/p
-
-  // The page a change lives under in the sidebar, which is also where
-  // clicking it navigates: the sheet for schematic changes, the part's copper
-  // layer for board changes (or the board's first layer when that page is not
-  // in the report).
-  function changeHome(c) {
-    if (c.scope === 'sch') {
-      return entries.findIndex((e) => e.project === c.project && e.kind === 'sch' && e.name === c.sheet);
-    }
-    const layerPage = entries.findIndex(
-      (e) => e.project === c.project && e.kind === 'pcb' && e.name === c.layer,
-    );
-    if (layerPage >= 0) return layerPage;
-    return entries.findIndex((e) => e.project === c.project && e.kind === 'pcb');
-  }
+  const changeLis = new Map();  // change index -> its row
+  const changePage = new Map(); // change index -> the page it nests under
+  const groupDom = new Map();   // page index -> its group's DOM + open state
 
   function setGroupOpen(idx, open) {
-    const g = changeGroups.get(idx);
+    const g = groupDom.get(idx);
     if (!g || g.open === open) return;
     g.open = open;
     g.row.classList.toggle('open', open);
@@ -420,9 +404,8 @@
 
   function goToChange(i) {
     const c = allChanges[i];
-    if (!c) return;
-    const target = changeHome(c);
-    if (target < 0) return;
+    const target = changePage.get(i);
+    if (!c || target === undefined) return;
     activeChange = i;
     setGroupOpen(target, true);
     if (target !== activeIdx) select(target);
@@ -563,50 +546,24 @@
     return;
   }
 
-  // Changes by the page they nest under. The sneaky ones lead each group:
-  // properties (a different part gets mounted, no pixel moved), then net
-  // rewires, then everything visible.
-  const changesByPage = new Map();
-  allChanges.forEach((c, i) => {
-    const home = changeHome(c);
-    if (home < 0) return;
-    if (!changesByPage.has(home)) changesByPage.set(home, []);
-    changesByPage.get(home).push(i);
-  });
-  const KIND_RANK = { property: 0, net: 1 };
-  const rank = (i) => KIND_RANK[allChanges[i].kind] ?? 2;
-  changesByPage.forEach((idxs) => idxs.sort((x, y) => rank(x) - rank(y) || x - y));
-
   // The group under one page row: a count chip and a chevron on the row
   // itself, then a summary line ("N changes · NN% of parts changed") that
-  // expands into the individual change rows. The percentage counts unique
-  // references with part changes against the parts on the page; net-only
-  // groups get no percentage (nets have no such denominator).
-  function appendChangeGroup(container, row, entryIdx, entry, idxs) {
+  // expands into the individual change rows.
+  const groupByPage = new Map(changeGroups.map((g) => [g.page, g]));
+  function appendChangeGroup(container, row, group) {
+    const entryIdx = group.page;
     const chip = document.createElement('span');
     chip.className = 'count-chip';
-    chip.textContent = idxs.length;
+    chip.textContent = group.count;
     const chevron = document.createElement('span');
     chevron.className = 'chevron';
     chevron.textContent = '▸';
     row.appendChild(chip);
     row.appendChild(chevron);
 
-    const changedRefs = new Set();
-    for (const ci of idxs) {
-      const c = allChanges[ci];
-      if (c.kind !== 'net') changedRefs.add(c.ref);
-    }
-    let text = idxs.length === 1 ? '1 change' : `${idxs.length} changes`;
-    if (changedRefs.size && entry.parts) {
-      // Board changes falling back to this page (their own layer is not in
-      // the report) can push the count past this page's own part total.
-      const pct = Math.min(100, Math.round((100 * changedRefs.size) / entry.parts));
-      text += ` · ${pct}% of parts changed`;
-    }
     const summary = document.createElement('div');
     summary.className = 'group-summary';
-    summary.textContent = text;
+    summary.textContent = group.summary;
 
     const items = document.createElement('ul');
     items.className = 'group-items';
@@ -641,36 +598,22 @@
     };
 
     // Changes render as a tree: one header row per part, its changes
-    // indented beneath as detail rows. `idxs` comes sneakiest-first, so
-    // insertion order ranks each part by its sneakiest change and keeps
-    // that order within the part too. The header badge carries the part's
-    // status - added/removed parts repeat it on every detail row, so those
-    // rows drop the badge instead.
-    const byRef = new Map();
-    for (const ci of idxs) {
-      const ref = allChanges[ci].ref;
-      if (!byRef.has(ref)) byRef.set(ref, []);
-      byRef.get(ref).push(ci);
-    }
-    for (const [ref, cis] of byRef) {
-      const kinds = new Set(cis.map((ci) => allChanges[ci].kind));
-      const status = kinds.has('added') ? 'added'
-        : kinds.has('removed') ? 'removed' : 'modified';
+    // indented beneath as detail rows.
+    for (const part of group.parts) {
       // The header stands in for its sneakiest change.
-      const head = makeRow(status, BADGE_LETTERS[status], status, ref, 'part-head');
-      wireRow(head, cis[0]);
-      for (const ci of cis) {
+      const head = makeRow(part.status, BADGE_LETTERS[part.status], part.status, part.ref, 'part-head');
+      wireRow(head, part.rows[0].c);
+      for (const { c: ci, badge } of part.rows) {
         const c = allChanges[ci];
         // A change with nothing to say beyond the header (removed parts)
         // is the header row itself.
         let li = head;
         if (c.detail) {
-          li = makeRow(c.kind === status ? null : CHANGE_BADGES[c.kind] || 'modified',
-            CHANGE_LETTERS[c.kind], c.kind, c.detail, 'part-sub');
+          li = makeRow(badge, CHANGE_LETTERS[c.kind], c.kind, c.detail, 'part-sub');
           wireRow(li, ci);
         }
         changeLis.set(ci, li);
-        changeOrder.push(ci);
+        changePage.set(ci, entryIdx);
       }
     }
 
@@ -680,26 +623,15 @@
     holder.appendChild(items);
     container.appendChild(holder);
 
-    changeGroups.set(entryIdx, { row, summary, items, open: false });
+    groupDom.set(entryIdx, { row, summary, items, open: false });
     const toggle = (ev) => {
       ev.stopPropagation(); // the row click underneath selects the page
-      setGroupOpen(entryIdx, !changeGroups.get(entryIdx).open);
+      setGroupOpen(entryIdx, !groupDom.get(entryIdx).open);
     };
     chip.onclick = toggle;
     chevron.onclick = toggle;
     summary.onclick = () => setGroupOpen(entryIdx, true);
   }
-
-  const KIND_LABELS = { sch: 'Schematics', pcb: 'PCB layers', fp: 'Footprints', sym: 'Symbols' };
-
-  // Group entries by project, then by kind, preserving original order.
-  const groups = new Map();
-  entries.forEach((e, i) => {
-    if (!groups.has(e.project)) groups.set(e.project, new Map());
-    const kinds = groups.get(e.project);
-    if (!kinds.has(e.kind)) kinds.set(e.kind, []);
-    kinds.get(e.kind).push(i);
-  });
 
   function makeSection(cls, headerCls, label) {
     const li = document.createElement('li');
@@ -716,13 +648,13 @@
     return { li, body };
   }
 
-  for (const [project, kinds] of groups) {
-    const proj = makeSection('project', 'project-header', project);
+  for (const project of pageGroups) {
+    const proj = makeSection('project', 'project-header', project.project);
     list.appendChild(proj.li);
-    for (const [kind, indices] of kinds) {
-      const kindSec = makeSection('kind', 'group-header', KIND_LABELS[kind] || kind);
+    for (const kind of project.kinds) {
+      const kindSec = makeSection('kind', 'group-header', kind.label);
       proj.body.appendChild(kindSec.li);
-      for (const idx of indices) {
+      for (const idx of kind.pages) {
         const e = entries[idx];
         const li = document.createElement('li');
         li.className = 'entry';
@@ -737,7 +669,8 @@
         li.onclick = () => select(idx);
         kindSec.body.appendChild(li);
         liElements[idx] = li;
-        if (changesByPage.has(idx)) appendChangeGroup(kindSec.body, li, idx, e, changesByPage.get(idx));
+        const group = groupByPage.get(idx);
+        if (group) appendChangeGroup(kindSec.body, li, group);
       }
     }
   }

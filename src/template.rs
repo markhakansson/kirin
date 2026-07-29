@@ -4,11 +4,13 @@ use anyhow::Result;
 
 use crate::kicad::Page;
 use crate::semantic::Change;
+use crate::sidebar::Sidebar;
 
 const TEMPLATE_HTML: &str = include_str!("assets/template.html");
 const STYLE_CSS: &str = include_str!("assets/style.css");
 const SCRIPT_JS: &str = include_str!("assets/script.js");
 
+/// Generates the static site at `out_dir` for the changes.
 pub fn generate_site(
     out_dir: &Path,
     base_ref: &str,
@@ -16,7 +18,8 @@ pub fn generate_site(
     pages: &[Page],
     changes: &[Change],
 ) -> Result<()> {
-    let entries_js = render_entries(pages, changes);
+    let sidebar = Sidebar::new(pages, changes);
+    let entries_js = render_entries(pages, changes, &sidebar);
     let html = TEMPLATE_HTML
         .replace("__BASE__", &html_escape(base_ref))
         .replace("__HEAD__", &html_escape(head_ref));
@@ -30,67 +33,112 @@ pub fn generate_site(
     Ok(())
 }
 
-/// The data file consumed by script.js: an `entries` array of pages and a
-/// `changes` array of semantic rows. The key names are the contract with
-/// the viewer.
-fn render_entries(pages: &[Page], changes: &[Change]) -> String {
-    let mut entries_js = String::from("const entries = [\n");
-    for page in pages {
-        entries_js.push_str("  { project: ");
-        entries_js.push_str(&json_escape(page.project.as_ref()));
-        entries_js.push_str(", kind: ");
-        entries_js.push_str(&json_escape(page.kind.as_str()));
-        entries_js.push_str(", name: ");
-        entries_js.push_str(&json_escape(page.name.as_ref()));
-        entries_js.push_str(", path: ");
-        entries_js.push_str(&json_escape(&page.rel));
-        entries_js.push_str(", status: ");
-        entries_js.push_str(&json_escape(page.status.as_str()));
-        if let Some(edge) = &page.edge_base {
-            entries_js.push_str(", edgeBase: ");
-            entries_js.push_str(&json_escape(edge));
-        }
-        if let Some(edge) = &page.edge_head {
-            entries_js.push_str(", edgeHead: ");
-            entries_js.push_str(&json_escape(edge));
-        }
-        if let Some(parts) = page.parts {
-            entries_js.push_str(&format!(", parts: {parts}"));
-        }
-        entries_js.push_str(" },\n");
-    }
-    entries_js.push_str("];\n");
+/// `{ key: value, ... }`, dropping the fields that are absent.
+fn obj(fields: &[(&str, Option<String>)]) -> String {
+    let body: Vec<_> = fields
+        .iter()
+        .filter_map(|(key, value)| value.as_ref().map(|v| format!("{key}: {v}")))
+        .collect();
+    format!("{{ {} }}", body.join(", "))
+}
 
-    entries_js.push_str("const changes = [\n");
-    for change in changes {
-        entries_js.push_str("  { project: ");
-        entries_js.push_str(&json_escape(change.project.as_ref()));
-        entries_js.push_str(", scope: ");
-        entries_js.push_str(&json_escape(change.scope.as_str()));
-        if let Some(sheet) = &change.sheet {
-            entries_js.push_str(", sheet: ");
-            entries_js.push_str(&json_escape(sheet.as_ref()));
-        }
-        if let Some(layer) = &change.layer {
-            entries_js.push_str(", layer: ");
-            entries_js.push_str(&json_escape(layer.as_ref()));
-        }
-        entries_js.push_str(", kind: ");
-        entries_js.push_str(&json_escape(change.kind.as_str()));
-        entries_js.push_str(", ref: ");
-        entries_js.push_str(&json_escape(change.reference.as_ref()));
-        entries_js.push_str(", detail: ");
-        entries_js.push_str(&json_escape(&change.detail));
-        if let Some([x, y]) = change.frac_base {
-            entries_js.push_str(&format!(", fb: [{x:.4}, {y:.4}]"));
-        }
-        if let Some([x, y]) = change.frac_head {
-            entries_js.push_str(&format!(", fh: [{x:.4}, {y:.4}]"));
-        }
-        entries_js.push_str(" },\n");
+/// `[a , b, ...]` as one line.
+fn arr(items: impl IntoIterator<Item = String>) -> String {
+    format!("[{}]", items.into_iter().collect::<Vec<_>>().join(", "))
+}
+
+/// A top-level array declaration, one item per line.
+fn decl(name: &str, items: impl IntoIterator<Item = String>) -> String {
+    let mut out = format!("const {name} = [\n");
+    for item in items {
+        out.push_str(&format!("  {item},\n"));
     }
-    entries_js.push_str("];\n");
-    entries_js
+    out.push_str("];\n");
+    out
+}
+
+/// Creates the content for `entries.js`, which contains all necessary metadata
+/// about the changes for the project. Used by `script.js`.
+fn render_entries(pages: &[Page], changes: &[Change], sidebar: &Sidebar) -> String {
+    let entries = pages.iter().map(|page| {
+        obj(&[
+            ("project", Some(json_escape(page.project.as_ref()))),
+            ("kind", Some(json_escape(page.kind.as_str()))),
+            ("name", Some(json_escape(page.name.as_ref()))),
+            ("path", Some(json_escape(&page.rel))),
+            ("status", Some(json_escape(page.status.as_str()))),
+            ("edgeBase", page.edge_base.as_deref().map(json_escape)),
+            ("edgeHead", page.edge_head.as_deref().map(json_escape)),
+            ("parts", page.parts.map(|n| n.to_string())),
+        ])
+    });
+
+    let frac = |at: Option<[f64; 2]>| at.map(|[x, y]| format!("[{x:.4}, {y:.4}]"));
+    let changes_js = changes.iter().map(|change| {
+        obj(&[
+            ("project", Some(json_escape(change.project.as_ref()))),
+            ("scope", Some(json_escape(change.scope.as_str()))),
+            (
+                "sheet",
+                change.sheet.as_ref().map(|s| json_escape(s.as_ref())),
+            ),
+            (
+                "layer",
+                change.layer.as_ref().map(|l| json_escape(l.as_ref())),
+            ),
+            ("kind", Some(json_escape(change.kind.as_str()))),
+            ("ref", Some(json_escape(change.reference.as_ref()))),
+            ("detail", Some(json_escape(&change.detail))),
+            ("fb", frac(change.frac_base)),
+            ("fh", frac(change.frac_head)),
+        ])
+    });
+
+    let page_groups = sidebar.projects.iter().map(|project| {
+        let kinds = project.kinds.iter().map(|kind| {
+            obj(&[
+                ("kind", Some(json_escape(kind.kind.as_str()))),
+                ("label", Some(json_escape(kind.kind.label()))),
+                ("pages", Some(arr(kind.pages.iter().map(usize::to_string)))),
+            ])
+        });
+        obj(&[
+            ("project", Some(json_escape(project.project.as_ref()))),
+            ("kinds", Some(arr(kinds))),
+        ])
+    });
+
+    // Semantic changes metadata.
+    let change_groups = sidebar.groups.iter().map(|group| {
+        let parts = group.parts.iter().map(|part| {
+            let rows = part.rows.iter().map(|row| {
+                obj(&[
+                    ("c", Some(row.change.to_string())),
+                    ("badge", row.badge.map(json_escape)),
+                ])
+            });
+            obj(&[
+                ("ref", Some(json_escape(part.reference.as_ref()))),
+                ("status", Some(json_escape(part.status.as_str()))),
+                ("rows", Some(arr(rows))),
+            ])
+        });
+        obj(&[
+            ("page", Some(group.page.to_string())),
+            ("count", Some(group.count.to_string())),
+            ("summary", Some(json_escape(&group.summary))),
+            ("parts", Some(arr(parts))),
+        ])
+    });
+
+    [
+        decl("entries", entries),
+        decl("changes", changes_js),
+        decl("pageGroups", page_groups),
+        decl("changeGroups", change_groups),
+        decl("changeOrder", sidebar.order.iter().map(usize::to_string)),
+    ]
+    .concat()
 }
 
 fn html_escape(s: &str) -> String {
@@ -148,11 +196,19 @@ mod tests {
             frac_base: Some([0.25, 0.5]),
             frac_head: None,
         }];
-        let js = render_entries(&pages, &changes);
+        let sidebar = Sidebar::new(&pages, &changes);
+        let js = render_entries(&pages, &changes, &sidebar);
         // The keys script.js reads; renaming one here must fail a test.
         for key in [
             "const entries = [",
             "const changes = [",
+            "const pageGroups = [",
+            "const changeGroups = [",
+            "const changeOrder = [",
+            r#"{ kind: "sch", label: "Schematics", pages: [0] }"#,
+            "page: 0, count: 1",
+            r#"summary: "1 change · 8% of parts changed""#,
+            r#"rows: [{ c: 0, badge: "modified" }]"#,
             "project: \"proj\"",
             "kind: \"sch\"",
             "name: \"Root sheet\"",

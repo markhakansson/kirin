@@ -43,6 +43,15 @@ impl Kind {
             Kind::Sym => "sym",
         }
     }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Kind::Sch => "Schematics",
+            Kind::Pcb => "PCB layers",
+            Kind::Fp => "Footprints",
+            Kind::Sym => "Symbols",
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

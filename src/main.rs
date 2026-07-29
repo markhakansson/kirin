@@ -9,6 +9,7 @@ mod ids;
 mod kicad;
 mod netlist;
 mod semantic;
+mod sidebar;
 mod svg;
 mod template;
 
