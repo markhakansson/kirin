@@ -326,8 +326,11 @@ nav li.change-group:hover { background: transparent; }
 }
 .group-items li:hover { background: var(--border); }
 .group-items li .badge { margin-top: 0.1rem; }
-.group-items li .path { white-space: normal; overflow-wrap: anywhere; }
+/* pre-line: an added part lists what it brings one fact per line. */
+.group-items li .path { white-space: pre-line; overflow-wrap: anywhere; }
 .group-items li.active { background: var(--accent-subtle); font-weight: 600; }
+/* Each part: header row with its changes indented beneath. */
+.group-items li.part-sub { padding-left: 3.4rem; }
 
 /* Location marker for the focused semantic change. Positioned in stage-wrap
    coordinates (not inside the transformed stage) so it keeps a constant

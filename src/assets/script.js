@@ -611,29 +611,67 @@
     const items = document.createElement('ul');
     items.className = 'group-items';
     items.hidden = true;
-    for (const ci of idxs) {
-      const c = allChanges[ci];
+
+    // Arrows: details carry ASCII "->" (they double as share-link keys);
+    // render the separator as an arrow. No badgeCls skips the badge.
+    const makeRow = (badgeCls, letter, kind, text, cls) => {
       const li = document.createElement('li');
-      const badge = document.createElement('span');
-      badge.className = 'badge ' + (CHANGE_BADGES[c.kind] || 'modified');
-      badge.textContent = CHANGE_LETTERS[c.kind] || '?';
-      badge.title = c.kind;
+      li.className = cls;
+      if (badgeCls) {
+        const badge = document.createElement('span');
+        badge.className = 'badge ' + badgeCls;
+        badge.textContent = letter;
+        badge.title = kind;
+        li.appendChild(badge);
+      }
       const label = document.createElement('span');
       label.className = 'path';
-      // Details carry ASCII "->" (they double as share-link keys); render
-      // the separator as an arrow.
-      const text = c.detail ? `${c.ref} · ${c.detail}` : c.ref;
       label.textContent = text.replace(/ -> /g, ' → ');
       label.title = label.textContent;
-      li.appendChild(badge);
       li.appendChild(label);
+      items.appendChild(li);
+      return li;
+    };
+    // Clicking a row focuses its change; clicking it again releases it.
+    const wireRow = (li, ci) => {
       li.onclick = () => {
         if (activeChange === ci && changeShown) clearChange();
         else goToChange(ci);
       };
-      changeLis.set(ci, li);
-      items.appendChild(li);
-      changeOrder.push(ci);
+    };
+
+    // Changes render as a tree: one header row per part, its changes
+    // indented beneath as detail rows. `idxs` comes sneakiest-first, so
+    // insertion order ranks each part by its sneakiest change and keeps
+    // that order within the part too. The header badge carries the part's
+    // status - added/removed parts repeat it on every detail row, so those
+    // rows drop the badge instead.
+    const byRef = new Map();
+    for (const ci of idxs) {
+      const ref = allChanges[ci].ref;
+      if (!byRef.has(ref)) byRef.set(ref, []);
+      byRef.get(ref).push(ci);
+    }
+    for (const [ref, cis] of byRef) {
+      const kinds = new Set(cis.map((ci) => allChanges[ci].kind));
+      const status = kinds.has('added') ? 'added'
+        : kinds.has('removed') ? 'removed' : 'modified';
+      // The header stands in for its sneakiest change.
+      const head = makeRow(status, BADGE_LETTERS[status], status, ref, 'part-head');
+      wireRow(head, cis[0]);
+      for (const ci of cis) {
+        const c = allChanges[ci];
+        // A change with nothing to say beyond the header (removed parts)
+        // is the header row itself.
+        let li = head;
+        if (c.detail) {
+          li = makeRow(c.kind === status ? null : CHANGE_BADGES[c.kind] || 'modified',
+            CHANGE_LETTERS[c.kind], c.kind, c.detail, 'part-sub');
+          wireRow(li, ci);
+        }
+        changeLis.set(ci, li);
+        changeOrder.push(ci);
+      }
     }
 
     const holder = document.createElement('li');

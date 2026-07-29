@@ -263,7 +263,7 @@ pub(super) fn diff_connectivity(
             sheet: head.or(base).and_then(|(e, _)| e.sheet.clone()),
             kind: ChangeKind::NetChanged,
             reference: reference.clone(),
-            detail: format!("pin {pin}: {from} -> {to}"),
+            detail: format!("Pin {pin}: {from} -> {to}"),
             layer: None,
             at_base: base.and_then(|(_, at)| at),
             at_head: head.and_then(|(_, at)| at),
@@ -332,7 +332,7 @@ mod tests {
         let changes = diff_connectivity(&"p".into(), &base, &head, &e, &e);
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].reference.as_ref(), "U3");
-        assert_eq!(changes[0].detail, "pin 1: A -> B");
+        assert_eq!(changes[0].detail, "Pin 1: A -> B");
     }
 
     #[test]
@@ -364,7 +364,7 @@ mod tests {
         assert!(
             changes
                 .iter()
-                .all(|c| c.detail == "pin 1: A -> unconnected")
+                .all(|c| c.detail == "Pin 1: A -> unconnected")
         );
     }
 
@@ -384,7 +384,7 @@ mod tests {
         let changes = diff_connectivity(&"p".into(), &base, &[], &base_e, &head_e);
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].reference.as_ref(), "U1");
-        assert_eq!(changes[0].detail, "pin 1: A -> unconnected");
+        assert_eq!(changes[0].detail, "Pin 1: A -> unconnected");
     }
 
     #[test]
@@ -424,7 +424,7 @@ mod tests {
             .map(|c| format!("{} {}", c.reference, c.detail))
             .collect();
         assert!(details.contains(&"J1 3 pins disconnected".to_string()));
-        assert!(details.contains(&"U1 pin 1: A -> unconnected".to_string()));
+        assert!(details.contains(&"U1 Pin 1: A -> unconnected".to_string()));
         assert_eq!(changes.len(), 4);
 
         // The reverse direction reads "connected".
@@ -465,10 +465,10 @@ mod tests {
         assert_eq!(
             rows,
             [
-                "U1 pin 4: MDC -> MDIO",
-                "U1 pin 5: MDIO -> MDC",
-                "U2 pin 4: MDC -> MDIO",
-                "U2 pin 5: MDIO -> MDC",
+                "U1 Pin 4: MDC -> MDIO",
+                "U1 Pin 5: MDIO -> MDC",
+                "U2 Pin 4: MDC -> MDIO",
+                "U2 Pin 5: MDIO -> MDC",
             ]
         );
     }
@@ -499,7 +499,7 @@ mod tests {
             .iter()
             .find(|c| c.reference.as_ref() == "M")
             .unwrap();
-        assert_eq!(m.detail, "pin 5: EN -> EN (added parts)");
+        assert_eq!(m.detail, "Pin 5: EN -> EN (added parts)");
     }
 
     #[test]
@@ -532,10 +532,10 @@ mod tests {
         assert_eq!(
             rows,
             [
-                "D pin 2: ENABLE -> Net-(D-K)",
-                "R pin 1: ENABLE -> GND",
-                "R pin 2: GND -> ENABLE",
-                "T pin 1: ENABLE -> Net-(D-K)",
+                "D Pin 2: ENABLE -> Net-(D-K)",
+                "R Pin 1: ENABLE -> GND",
+                "R Pin 2: GND -> ENABLE",
+                "T Pin 1: ENABLE -> Net-(D-K)",
             ]
         );
     }

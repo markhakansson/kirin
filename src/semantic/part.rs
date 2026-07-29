@@ -54,7 +54,7 @@ impl Diff<'_> {
                 Some(x),
                 Some(y),
                 &y.reference,
-                format!("{} -> {}", x.reference, y.reference),
+                format!("Renamed: {} -> {}", x.reference, y.reference),
             );
         }
         if self.scope == Kind::Sch && x.value != y.value {
@@ -64,7 +64,7 @@ impl Diff<'_> {
                 Some(y),
                 &y.reference,
                 format!(
-                    "{} -> {}",
+                    "Value: {} -> {}",
                     x.value.as_deref().unwrap_or("-"),
                     y.value.as_deref().unwrap_or("-")
                 ),
@@ -77,7 +77,7 @@ impl Diff<'_> {
                 Some(y),
                 &y.reference,
                 format!(
-                    "{} -> {}",
+                    "Library: {} -> {}",
                     x.lib_id.as_deref().unwrap_or("-"),
                     y.lib_id.as_deref().unwrap_or("-")
                 ),
@@ -139,33 +139,45 @@ impl Diff<'_> {
                     Some(x),
                     None,
                     &y.reference,
-                    detail(format!("flipped to {to}")),
+                    detail(format!("Flipped to {to}")),
                 );
                 self.push(
                     ChangeKind::Flipped,
                     None,
                     Some(y),
                     &y.reference,
-                    detail(format!("flipped from {from}")),
+                    detail(format!("Flipped from {from}")),
                 );
             } else if !motion.is_empty() {
-                self.push(
-                    ChangeKind::Moved,
-                    Some(x),
-                    Some(y),
-                    &y.reference,
-                    motion.join(", "),
-                );
+                // The pieces stay lowercase for the flipped rows above, where
+                // they trail the direction; leading a row they get a capital.
+                let mut detail = motion.join(", ");
+                if let Some(first) = detail.get_mut(0..1) {
+                    first.make_ascii_uppercase();
+                }
+                self.push(ChangeKind::Moved, Some(x), Some(y), &y.reference, detail);
             }
         }
     }
 }
 
+/// Everything a fresh part brings, one line per fact - the added row is the
+/// only place to see what actually arrived. A removed part needs no such
+/// inventory (the base revision still shows it), so its detail stays empty.
 fn describe(e: &Entity) -> String {
-    e.value
-        .clone()
-        .or_else(|| e.lib_id.clone())
-        .unwrap_or_default()
+    let mut lines = Vec::new();
+    if let Some(v) = e.value.as_deref().filter(|v| !v.is_empty()) {
+        lines.push(format!("Value: {v}"));
+    }
+    if let Some(l) = e.lib_id.as_deref().filter(|l| !l.is_empty()) {
+        lines.push(format!("Library: {l}"));
+    }
+    for (k, v) in &e.properties {
+        if !v.is_empty() {
+            lines.push(format!("{k}: {v}"));
+        }
+    }
+    lines.join("\n")
 }
 
 pub(super) fn diff_entities(
@@ -214,7 +226,7 @@ pub(super) fn diff_entities(
             Some(e),
             None,
             &e.reference,
-            describe(e),
+            String::new(),
         );
     }
 
@@ -335,7 +347,10 @@ mod tests {
         ]);
         let changes = diff_entities(&"p".into(), Kind::Sch, &a, &b);
         let details: Vec<&str> = changes.iter().map(|c| c.detail.as_str()).collect();
-        assert_eq!(details, ["ti:LM339 -> ti:LM339LV", "LM339 -> LM339LV"]);
+        assert_eq!(
+            details,
+            ["Library: ti:LM339 -> ti:LM339LV", "Value: LM339 -> LM339LV"]
+        );
     }
 
     #[test]
@@ -348,11 +363,11 @@ mod tests {
         // The row on the layer the part left marks its base location only,
         // the one on the layer it landed on its head location only.
         let left = on("F.Cu").unwrap();
-        assert_eq!(left.detail, "flipped to B.Cu");
+        assert_eq!(left.detail, "Flipped to B.Cu");
         assert_eq!(left.at_base, Some([10.0, 10.0]));
         assert_eq!(left.at_head, None);
         let landed = on("B.Cu").unwrap();
-        assert_eq!(landed.detail, "flipped from F.Cu");
+        assert_eq!(landed.detail, "Flipped from F.Cu");
         assert_eq!(landed.at_base, None);
         assert_eq!(landed.at_head, Some([10.0, 10.0]));
     }
@@ -367,8 +382,8 @@ mod tests {
         assert_eq!(
             details,
             [
-                "flipped from F.Cu, moved 5.00 mm, rotated to 180\u{b0}",
-                "flipped to B.Cu, moved 5.00 mm, rotated to 180\u{b0}",
+                "Flipped from F.Cu, moved 5.00 mm, rotated to 180\u{b0}",
+                "Flipped to B.Cu, moved 5.00 mm, rotated to 180\u{b0}",
             ]
         );
     }
@@ -379,7 +394,7 @@ mod tests {
         let b = BTreeMap::from([("u1".into(), footprint("R1", "F.Cu", [13.0, 14.0], 90.0))]);
         let changes = diff_entities(&"p".into(), Kind::Pcb, &a, &b);
         assert_eq!(changes.len(), 1);
-        assert_eq!(changes[0].detail, "moved 5.00 mm");
+        assert_eq!(changes[0].detail, "Moved 5.00 mm");
         assert_eq!(changes[0].layer, Some("F.Cu".into()));
     }
 }

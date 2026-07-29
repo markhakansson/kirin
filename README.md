@@ -46,16 +46,20 @@ library swaps in whichever file they occur. A
 part that switched board side is reported under both copper layers,
 marking where it left and where it landed. The
 viewer nests them in the sidebar under the page they happened on,
-collapsed behind a summary line ("5 changes · 38% of parts changed");
-clicking a change (or stepping with `n`/`p`, which expands the group it
-enters) jumps to that page, zooms in and marks the exact location. Parts that were deleted and re-placed
+collapsed behind a summary line ("5 changes · 38% of parts changed")
+and rendered as a tree: one header row per part, its changes indented
+beneath, ordered sneakiest first (properties, then nets, then the
+visible rest) across parts and within each one; clicking a change (or
+stepping with `n`/`p`, which expands the group it enters) jumps to that
+page, zooms in and marks the exact location, and clicking it again
+releases it. Parts that were deleted and re-placed
 under the same reference are matched up and reported by their actual
 differences rather than as a remove/add pair.
 
 Electrical connectivity is compared as well, from netlists exported per
 revision. Net names take no part in the comparison - nets are matched by
 the pins they connect, so renaming a label is not a change - and only
-pins whose connections actually changed are reported ("pin 2:
+pins whose connections actually changed are reported ("Pin 2:
 TJA_CONFIG1 -> +3V3"), with the marker pointing at the pin itself.
 
 On a monorepo with several boards, `--project-dir <path>` restricts the
