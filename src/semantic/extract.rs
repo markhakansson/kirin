@@ -193,10 +193,8 @@ pub(super) fn sch_entities(root: &Path) -> Result<BTreeMap<EntityId, Entity>> {
     Ok(out)
 }
 
-/// Sheet display names by instance identity - the chain of sheet-block
-/// UUIDs from the root - walked like `sch_entities`. The chain survives a
-/// sheet being renamed or its file moving, which is what pairing needs.
-pub(super) fn sheet_names(root: &Path) -> Result<BTreeMap<String, PageName>> {
+/// Returns a map with sheet UUID to page name.
+pub fn sheet_names(root: &Path) -> Result<BTreeMap<String, PageName>> {
     let mut out = BTreeMap::new();
     if !root.is_file() {
         return Ok(out);

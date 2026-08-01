@@ -100,11 +100,10 @@ pub fn diff_pcb(
     Ok((changes, part_totals(&a, &b, |e| e.layer.as_ref())))
 }
 
-/// Sheet pages renamed between two hierarchies: base name -> head name,
-/// paired by the sheets' instance UUIDs, which survive both a new display
-/// name and a renamed file. Anything ambiguous - an old name renamed two
-/// ways, two sheets landing on one target, or a name still in use by an
-/// unrenamed base sheet - stays out and keeps today's added/removed report.
+/// Returns a map with the old/new sheet names, for all sheets that have been
+/// renamed between the commits. Sheets pair by their instance UUIDs, which
+/// survive both a new display name and a renamed file; anything ambiguous
+/// stays out and keeps the added/removed report.
 pub fn sheet_renames(root_a: &Path, root_b: &Path) -> Result<BTreeMap<PageName, PageName>> {
     let a = sheet_names(root_a)?;
     let b = sheet_names(root_b)?;
@@ -148,8 +147,8 @@ pub fn diff_schematics(
     renames: &BTreeMap<PageName, PageName>,
 ) -> Result<(Vec<Change>, BTreeMap<PageName, usize>)> {
     let mut a = sch_entities(root_a)?;
-    // A renamed sheet is still the same page; its base-side facts report
-    // under the name the page shows, which is the head one.
+    // If pages were renamed, use the new page name for the old change. This
+    // will make it easier to diff.
     for e in a.values_mut() {
         if let Some(new) = e.sheet.as_ref().and_then(|s| renames.get(s)) {
             e.sheet = Some(new.clone());
