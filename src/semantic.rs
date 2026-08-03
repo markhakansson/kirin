@@ -17,7 +17,7 @@ use crate::kicad::Kind;
 use crate::netlist::Net;
 
 use connectivity::diff_connectivity;
-use extract::{Entity, pcb_data, sch_entities};
+use extract::{Entity, pcb_data, sch_entities, sheet_names};
 use geometry::Bbox;
 use part::diff_entities;
 
@@ -100,6 +100,41 @@ pub fn diff_pcb(
     Ok((changes, part_totals(&a, &b, |e| e.layer.as_ref())))
 }
 
+/// Returns a map with the old/new sheet names, for all sheets that have been
+/// renamed between the commits. Sheets pair by their instance UUIDs, which
+/// survive both a new display name and a renamed file; anything ambiguous
+/// stays out and keeps the added/removed report.
+pub fn sheet_renames(root_a: &Path, root_b: &Path) -> Result<BTreeMap<PageName, PageName>> {
+    let a = sheet_names(root_a)?;
+    let b = sheet_names(root_b)?;
+    let mut candidates: BTreeMap<&PageName, BTreeSet<&PageName>> = BTreeMap::new();
+    // Base names some instance of which keeps its name (or has no head
+    // counterpart): their exported page still owns that name on the base
+    // side, so no rename may source from or land on it.
+    let mut kept = BTreeSet::new();
+    for (key, old) in &a {
+        match b.get(key) {
+            Some(new) if old != new => {
+                candidates.entry(old).or_default().insert(new);
+            }
+            _ => {
+                kept.insert(old);
+            }
+        }
+    }
+    let unambiguous = candidates
+        .into_iter()
+        .filter(|(old, news)| news.len() == 1 && !kept.contains(*old))
+        .map(|(old, news)| (old.clone(), (*news.first().unwrap()).clone()));
+    let mut renames: BTreeMap<PageName, PageName> = unambiguous.collect();
+    let mut targets: BTreeMap<PageName, usize> = BTreeMap::new();
+    for new in renames.values() {
+        *targets.entry(new.clone()).or_default() += 1;
+    }
+    renames.retain(|_, new| targets[new] == 1 && !kept.contains(new));
+    Ok(renames)
+}
+
 /// Diff the symbols of two schematic hierarchies by UUID, walking sub-sheets,
 /// plus electrical connectivity when both sides' netlists are given.
 /// `root_a`/`root_b` are the materialized root `.kicad_sch` files. Also
@@ -109,8 +144,16 @@ pub fn diff_schematics(
     root_a: &Path,
     root_b: &Path,
     nets: Option<(&[Net], &[Net])>,
+    renames: &BTreeMap<PageName, PageName>,
 ) -> Result<(Vec<Change>, BTreeMap<PageName, usize>)> {
-    let a = sch_entities(root_a)?;
+    let mut a = sch_entities(root_a)?;
+    // If pages were renamed, use the new page name for the old change. This
+    // will make it easier to diff.
+    for e in a.values_mut() {
+        if let Some(new) = e.sheet.as_ref().and_then(|s| renames.get(s)) {
+            e.sheet = Some(new.clone());
+        }
+    }
     let b = sch_entities(root_b)?;
     let mut changes = diff_entities(project, Kind::Sch, &a, &b);
     if let Some((nets_a, nets_b)) = nets {
@@ -142,6 +185,71 @@ fn part_totals(
 mod tests {
     use super::fixtures::{entities, instance};
     use super::*;
+
+    /// Write a root schematic holding only sheet blocks; the sub files need
+    /// not exist for the hierarchy walk to see names and UUIDs.
+    fn sheet_root(label: &str, sheets: &[(&str, &str, &str)]) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let body: String = sheets
+            .iter()
+            .map(|(uuid, name, file)| {
+                format!(
+                    r#"(sheet (at 0 0) (size 10 10) (uuid "{uuid}")
+                      (property "Sheetname" "{name}" (at 0 0 0))
+                      (property "Sheetfile" "{file}" (at 0 0 0)))"#
+                )
+            })
+            .collect();
+        let path = std::env::temp_dir().join(format!("kirin_ren_{label}_{nanos}.kicad_sch"));
+        std::fs::write(
+            &path,
+            format!(
+                r#"(kicad_sch (version 20250114) (generator "eeschema") (uuid "root") {body})"#
+            ),
+        )
+        .unwrap();
+        path
+    }
+
+    #[test]
+    fn sheet_renames_pair_by_instance_uuid() {
+        // s1 renames (file and all), s2 renames its display name only, s3
+        // keeps its name, and s4 lands on a name s3 still owns - ambiguous,
+        // so it stays out.
+        let a = sheet_root(
+            "a",
+            &[
+                ("s1", "48V to 5V", "48v_to_5v.kicad_sch"),
+                ("s2", "5V to 3.3V", "dcdc_ref.kicad_sch"),
+                ("s3", "Port A", "port.kicad_sch"),
+                ("s4", "Port B", "port.kicad_sch"),
+            ],
+        );
+        let b = sheet_root(
+            "b",
+            &[
+                ("s1", "48V to 4.2V", "48v_to_4.2v.kicad_sch"),
+                ("s2", "4.2V to 3.3V", "dcdc_ref.kicad_sch"),
+                ("s3", "Port A", "port.kicad_sch"),
+                ("s4", "Port A", "port.kicad_sch"),
+            ],
+        );
+        let renames = sheet_renames(&a, &b).unwrap();
+        let _ = std::fs::remove_file(a);
+        let _ = std::fs::remove_file(b);
+
+        let pairs: Vec<_> = renames
+            .iter()
+            .map(|(o, n)| (o.as_ref(), n.as_ref()))
+            .collect();
+        assert_eq!(
+            pairs,
+            [("48V to 5V", "48V to 4.2V"), ("5V to 3.3V", "4.2V to 3.3V"),]
+        );
+    }
 
     #[test]
     fn part_totals_count_unique_refs_per_page() {

@@ -196,10 +196,13 @@ pub fn process_project(
     let mut pages = Vec::new();
     let mut changes = Vec::new();
     if sch_changed {
-        let mut sch_pages = render_schematics(project, &work_a, &work_b, out)?;
         let sch_rel = project.dir.join(format!("{}.kicad_sch", project.name));
         let root_a = work_a.join(&sch_rel);
         let root_b = work_b.join(&sch_rel);
+        // A renamed sheet (paired by instance UUID) stays one page under
+        // its head name instead of splitting into an added/removed couple.
+        let renames = semantic::sheet_renames(&root_a, &root_b)?;
+        let mut sch_pages = render_schematics(project, &work_a, &work_b, out, &renames)?;
         // Connectivity can only be compared when the project exists on both
         // revisions; otherwise the part diff already says everything.
         let nets = if root_a.is_file() && root_b.is_file() {
@@ -216,6 +219,7 @@ pub fn process_project(
             &root_a,
             &root_b,
             nets.as_ref().map(|(a, b)| (a.as_slice(), b.as_slice())),
+            &renames,
         )?;
         localize_sch_changes(&mut sch_changes, project, out);
         // Visually identical sheets earn a page only when a change (a pin
@@ -577,17 +581,19 @@ fn write_blobs(repo: &gix::Repository, blobs: &[(PathBuf, ObjectId)], dst: &Path
 }
 
 /// Export the root schematic hierarchy on each side that has it, pair sheets by
-/// file name, and keep only those that changed.
+/// file name (with `renames` translating base names to head ones), and keep
+/// only those that changed.
 fn render_schematics(
     project: &Project,
     work_a: &Path,
     work_b: &Path,
     out: &Path,
+    renames: &BTreeMap<PageName, PageName>,
 ) -> Result<Vec<Page>> {
     let folder = sanitize(project.label().as_ref());
     let rel_dir = format!("{folder}/sch");
 
-    let base = export_sch_side(
+    let mut base = export_sch_side(
         project,
         work_a,
         &out.join("a").join("svg").join(&folder).join("sch"),
@@ -597,6 +603,37 @@ fn render_schematics(
         work_b,
         &out.join("b").join("svg").join(&folder).join("sch"),
     )?;
+
+    // A renamed sheet exports under each side's own name; move the base
+    // file to the head name so one rel path serves both revisions. Via a
+    // temp name first, so sheets trading names don't collide mid-move.
+    if !renames.is_empty() {
+        let head_files: BTreeMap<PageName, &String> = head
+            .keys()
+            .map(|f| (sheet_name(f, &project.name).into(), f))
+            .collect();
+        let mut pending = Vec::new();
+        for (file, path) in std::mem::take(&mut base) {
+            let target = renames
+                .get(&PageName::from(sheet_name(&file, &project.name)))
+                .and_then(|n| head_files.get(n));
+            match target {
+                Some(new_file) => {
+                    let tmp = path.with_extension("svg.tmp");
+                    fs::rename(&path, &tmp)?;
+                    pending.push((tmp, (*new_file).clone()));
+                }
+                None => {
+                    base.insert(file, path);
+                }
+            }
+        }
+        for (tmp, file) in pending {
+            let dest = tmp.with_file_name(&file);
+            fs::rename(&tmp, &dest)?;
+            base.insert(file, dest);
+        }
+    }
 
     // Order: root sheet first, then the rest alphabetically (case-insensitive).
     let order = |name: &str| {
