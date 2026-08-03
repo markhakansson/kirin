@@ -437,8 +437,10 @@ section.viewer {
   cursor: grab;
 }
 
-.stage-wrap.grabbing { cursor: grabbing; }
 .stage-wrap.swipe-cursor { cursor: ew-resize; }
+.stage-wrap.grabbing { cursor: grabbing; }
+/* Panning in swipe mode carries both classes; the pan cursor wins. */
+.stage-wrap.swipe-cursor.grabbing { cursor: grabbing; }
 
 .stage {
   position: absolute;
