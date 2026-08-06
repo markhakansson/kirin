@@ -18,7 +18,13 @@
           pname = "kirin";
           version = "0.1.0";
           src = self;
-          cargoLock.lockFile = ./Cargo.lock;
+          cargoLock = {
+            lockFile = ./Cargo.lock;
+            outputHashes = {
+              "kiutils_kicad-0.3.0" = "sha256-crJmgSjBGaonU6awQ2ilq3u7cLYftdwWm/4uMbL+3y8=";
+              "kiutils_sexpr-0.1.1" = "sha256-crJmgSjBGaonU6awQ2ilq3u7cLYftdwWm/4uMbL+3y8=";
+            };
+          };
         };
       in
       {
