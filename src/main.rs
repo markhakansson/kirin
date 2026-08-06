@@ -28,6 +28,10 @@ struct Args {
     /// Restrict to projects under this repo-relative path (e.g. anchor)
     #[arg(short, long)]
     project_dir: Option<PathBuf>,
+    /// With --project-dir: also diff footprint/symbol libraries outside it
+    /// (shared libraries usually live next to projects, not inside them)
+    #[arg(long, requires = "project_dir")]
+    all_libs: bool,
     /// Output directory
     #[arg(short, long, default_value = "kirin-out")]
     out: PathBuf,
@@ -63,18 +67,19 @@ fn main() -> Result<()> {
         pages.extend(project_pages);
         changes.extend(project_changes);
     }
+    let lib_filter = args.project_dir.as_deref().filter(|_| !args.all_libs);
     pages.extend(kicad::process_footprint_libs(
         &repo,
         &base_blobs,
         &head_blobs,
-        args.project_dir.as_deref(),
+        lib_filter,
         &args.out,
     )?);
     pages.extend(kicad::process_symbol_libs(
         &repo,
         &base_blobs,
         &head_blobs,
-        args.project_dir.as_deref(),
+        lib_filter,
         &args.out,
     )?);
     if projects.is_empty() && pages.is_empty() {

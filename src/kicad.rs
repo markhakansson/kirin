@@ -350,8 +350,9 @@ fn materialize(
 }
 
 /// Diff every footprint library (a `*.pretty` directory of `*.kicad_mod`
-/// files) touched between the two revisions. Only changed footprints are
-/// materialized and exported; each becomes one page.
+/// files) touched between the two revisions, restricted to `filter` when
+/// given. Only changed footprints are materialized and exported; each
+/// becomes one page.
 pub fn process_footprint_libs(
     repo: &gix::Repository,
     base: &[(PathBuf, ObjectId)],
@@ -467,8 +468,9 @@ fn library_pages(
 }
 
 /// Diff every symbol library (`*.kicad_sym`) touched between the two
-/// revisions. The whole library is exported on both sides (one SVG per symbol
-/// unit) and only visually changed units are kept.
+/// revisions, restricted to `filter` when given. The whole library is
+/// exported on both sides (one SVG per symbol unit) and only visually
+/// changed units are kept.
 pub fn process_symbol_libs(
     repo: &gix::Repository,
     base: &[(PathBuf, ObjectId)],
