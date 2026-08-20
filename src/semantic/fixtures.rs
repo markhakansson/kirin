@@ -14,6 +14,7 @@ use super::extract::{Entity, sch_entities};
 ///   1 around (2, 2), unit 2 around (22, 2), unit 3 with two visible pin
 ///   tips around (42, 2) and one hidden pin far away.
 /// - `Lib:One` has a single pin "1".
+/// - `Lib:Tri` has three visible pins "1"/"2"/"3" along its bottom edge.
 /// - `Lib:BoxLV` derives from `Lib:Box` and has no drawing of its own.
 const LIB: &str = r#"(lib_symbols
         (symbol "Lib:Box"
@@ -28,6 +29,11 @@ const LIB: &str = r#"(lib_symbols
             (pin power_in line (at 70 70 0) (length 2) hide (name "V") (number "3"))))
         (symbol "Lib:One"
           (symbol "One_1_1" (pin passive line (at 0 0 0) (length 2) (name "P") (number "1"))))
+        (symbol "Lib:Tri"
+          (symbol "Tri_1_1"
+            (pin passive line (at 0 0 0) (length 2) (name "A") (number "1"))
+            (pin passive line (at 4 0 0) (length 2) (name "B") (number "2"))
+            (pin passive line (at 8 0 0) (length 2) (name "C") (number "3"))))
         (symbol "Lib:BoxLV" (extends "Box")))"#;
 
 pub(super) fn instance(reference: &str, lib: &str, at: &str, unit: i32) -> String {

@@ -119,6 +119,15 @@ fn ref_has_pin(list: Option<&Vec<&Entity>>, pin: &Pin) -> Option<bool> {
     )
 }
 
+/// The set of symbols one side places for a reference; the sides disagreeing
+/// means the part was swapped for another.
+fn lib_ids<'e>(list: Option<&Vec<&'e Entity>>) -> BTreeSet<&'e str> {
+    list.into_iter()
+        .flatten()
+        .filter_map(|e| e.lib_id.as_deref())
+        .collect()
+}
+
 fn locate_pin<'e>(
     map: &BTreeMap<&Reference, Vec<&'e Entity>>,
     reference: &Reference,
@@ -191,20 +200,41 @@ pub(super) fn diff_connectivity(
 
     let by_ref_a = entities_by_ref(ents_a);
     let by_ref_b = entities_by_ref(ents_b);
-    // A part whose symbol was swapped or wiring gutted floods the report
-    // with one dangling-pin row per pin; several pins of one part sharing
-    // that fate say a single thing. Count them first, so small changes keep
+    // A part whose symbol was swapped floods the report with one
+    // dangling-pin row per pin; several pins of one part sharing that
+    // fate say a single thing. Collect them first, so small changes keep
     // their precise per-pin rows.
     const STORM: usize = 3;
-    let mut dangling: BTreeMap<_, usize> = BTreeMap::new();
+    let mut dangling: BTreeMap<(&Reference, bool), Vec<&Pin>> = BTreeMap::new();
     let mut rows = Vec::new();
-    let nodes: BTreeSet<_> = a.net_of.keys().chain(b.net_of.keys()).copied().collect();
+    let nodes: BTreeSet<_> = a
+        .net_of
+        .keys()
+        .chain(b.net_of.keys())
+        .chain(a.lone.keys())
+        .chain(b.lone.keys())
+        .copied()
+        .collect();
     for (reference, pin) in nodes {
         let sa = a.net_of.get(&(reference, pin));
         let sb = b.net_of.get(&(reference, pin));
         let same = match (sa, sb) {
             (Some(ai), Some(bi)) => matched.get(ai) == Some(bi),
-            (None, None) => true,
+            // Unconnected among common parts on both sides is the same
+            // silence, unless the pin's one-revision-only company differs:
+            // a pin gaining or losing a net of added/removed parts is a
+            // real (dis)connection even though no common part shares it.
+            (None, None) => {
+                let la = a.lone.get(&(reference, pin));
+                let lb = b.lone.get(&(reference, pin));
+                match (la, lb) {
+                    // Compare display names: sheet renames move the path
+                    // prefix of every net on the sheet, which is no rewire.
+                    (Some(x), Some(y)) => short_net(x) == short_net(y),
+                    (None, None) => true,
+                    _ => false,
+                }
+            }
             _ => false,
         };
         if same {
@@ -245,14 +275,31 @@ pub(super) fn diff_connectivity(
             _ => {}
         }
         if let Some(fate) = fate {
-            *dangling.entry((reference, fate)).or_default() += 1;
+            dangling.entry((reference, fate)).or_default().push(pin);
         }
         rows.push((reference, pin, from, to, fate));
     }
 
+    // Same-fate pins collapse into one summary row only when the symbol
+    // was swapped for another part: the part's own Library row is the
+    // parent of every such pin. On an unchanged symbol every pin keeps
+    // its row - the per-pin diff is what firmware pin re-assignment is
+    // done from.
+    let collapsed: BTreeSet<(&Reference, bool)> = dangling
+        .iter()
+        .filter(|((reference, _), pins)| {
+            pins.len() >= STORM && {
+                let la = lib_ids(by_ref_a.get(*reference));
+                let lb = lib_ids(by_ref_b.get(*reference));
+                !la.is_empty() && !lb.is_empty() && la != lb
+            }
+        })
+        .map(|(key, _)| *key)
+        .collect();
+
     let mut changes = Vec::new();
     for (reference, pin, from, to, fate) in rows {
-        if fate.is_some_and(|f| dangling[&(reference, f)] >= STORM) {
+        if fate.is_some_and(|f| collapsed.contains(&(reference, f))) {
             continue;
         }
         let base = locate_pin(&by_ref_a, reference, pin);
@@ -272,19 +319,22 @@ pub(super) fn diff_connectivity(
         });
     }
     for ((reference, disconnected), pins) in dangling {
-        if pins < STORM {
+        if !collapsed.contains(&(reference, disconnected)) {
             continue;
         }
-        let base = by_ref_a.get(reference).and_then(|l| l.first().copied());
-        let head = by_ref_b.get(reference).and_then(|l| l.first().copied());
+        // The marker points at one of the affected pins; the reference's
+        // first entity may be an unused unit of a multi-unit symbol.
+        let base = locate_pin(&by_ref_a, reference, pins[0]);
+        let head = locate_pin(&by_ref_b, reference, pins[0]);
         changes.push(Change {
             project: project.clone(),
             scope: Kind::Sch,
-            sheet: head.or(base).and_then(|e| e.sheet.clone()),
+            sheet: head.or(base).and_then(|(e, _)| e.sheet.clone()),
             kind: ChangeKind::NetChanged,
             reference: reference.clone(),
             detail: format!(
-                "{pins} pins {}",
+                "{} pins {}",
+                pins.len(),
                 if disconnected {
                     "disconnected"
                 } else {
@@ -292,8 +342,8 @@ pub(super) fn diff_connectivity(
                 }
             ),
             layer: None,
-            at_base: base.and_then(|e| e.at),
-            at_head: head.and_then(|e| e.at),
+            at_base: base.and_then(|(_, at)| at),
+            at_head: head.and_then(|(_, at)| at),
             frac_base: None,
             frac_head: None,
         });
@@ -403,10 +453,10 @@ mod tests {
     }
 
     #[test]
-    fn disconnection_storm_collapses_per_part() {
-        // Every connection of J1 dies (its symbol was gutted): three or
-        // more same-fate pins fold into one row, while each counterpart
-        // keeps its precise per-pin row.
+    fn gutted_wiring_on_same_symbol_keeps_per_pin_rows() {
+        // Every connection of J1 dies but its symbol stays: firmware pin
+        // re-assignment reads the per-pin rows, so nothing folds into an
+        // "N pins" summary.
         let e = entities(&[
             instance("J1", "Lib:Box", "100 100 0", 1),
             instance("U1", "Lib:Box", "50 50 0", 1),
@@ -423,17 +473,158 @@ mod tests {
             .iter()
             .map(|c| format!("{} {}", c.reference, c.detail))
             .collect();
-        assert!(details.contains(&"J1 3 pins disconnected".to_string()));
+        assert!(details.contains(&"J1 Pin 1: A -> unconnected".to_string()));
+        assert!(details.contains(&"J1 Pin 2: B -> unconnected".to_string()));
+        assert!(details.contains(&"J1 Pin 3: C -> unconnected".to_string()));
         assert!(details.contains(&"U1 Pin 1: A -> unconnected".to_string()));
-        assert_eq!(changes.len(), 4);
+        assert_eq!(changes.len(), 6);
 
-        // The reverse direction reads "connected".
+        // The reverse direction stays per-pin too.
         let reversed = diff_connectivity(&"p".into(), &[], &base, &e, &e);
         assert!(
             reversed
                 .iter()
-                .any(|c| c.reference.as_ref() == "J1" && c.detail == "3 pins connected")
+                .any(|c| c.reference.as_ref() == "J1" && c.detail == "Pin 1: unconnected -> A")
         );
+    }
+
+    #[test]
+    fn pin_remap_on_a_large_part_keeps_per_pin_rows() {
+        // Three of M's eight connections dangle on head - far from gutted
+        // wiring, so each pin keeps its own informative row instead of
+        // folding into a "3 pins disconnected" summary.
+        let mut insts = vec![instance("M", "Lib:Box", "100 100 0", 1)];
+        for i in 1..=8 {
+            insts.push(instance(&format!("U{i}"), "Lib:Box", "10 10 0", 1));
+        }
+        let e = entities(&insts);
+        let nets = |n: usize| -> Vec<Net> {
+            (1..=n)
+                .map(|i| Net {
+                    name: format!("N{i}").into(),
+                    nodes: vec![
+                        ("M".into(), format!("{i}").into()),
+                        (format!("U{i}").into(), "1".into()),
+                    ],
+                })
+                .collect()
+        };
+        let changes = diff_connectivity(&"p".into(), &nets(8), &nets(5), &e, &e);
+        let mut m_rows: Vec<_> = changes
+            .iter()
+            .filter(|c| c.reference.as_ref() == "M")
+            .map(|c| c.detail.as_str())
+            .collect();
+        m_rows.sort();
+        assert_eq!(
+            m_rows,
+            [
+                "Pin 6: N6 -> unconnected",
+                "Pin 7: N7 -> unconnected",
+                "Pin 8: N8 -> unconnected",
+            ]
+        );
+    }
+
+    #[test]
+    fn symbol_swap_collapses_dangling_pins() {
+        // The same three dangling pins, but M's symbol changed: the
+        // Library row on M is the parent change and the pins fold into
+        // one summary row.
+        let mut base_insts = vec![instance("M", "Lib:Box", "100 100 0", 1)];
+        let mut head_insts = vec![instance("M", "Lib:BoxLV", "100 100 0", 1)];
+        for i in 1..=8 {
+            let u = instance(&format!("U{i}"), "Lib:Box", "10 10 0", 1);
+            base_insts.push(u.clone());
+            head_insts.push(u);
+        }
+        let e_base = entities(&base_insts);
+        let e_head = entities(&head_insts);
+        let nets = |n: usize| -> Vec<Net> {
+            (1..=n)
+                .map(|i| Net {
+                    name: format!("N{i}").into(),
+                    nodes: vec![
+                        ("M".into(), format!("{i}").into()),
+                        (format!("U{i}").into(), "1".into()),
+                    ],
+                })
+                .collect()
+        };
+        let changes = diff_connectivity(&"p".into(), &nets(8), &nets(5), &e_base, &e_head);
+        let m_rows: Vec<_> = changes
+            .iter()
+            .filter(|c| c.reference.as_ref() == "M")
+            .map(|c| c.detail.as_str())
+            .collect();
+        assert_eq!(m_rows, ["3 pins disconnected"]);
+    }
+
+    #[test]
+    fn storm_marker_points_at_an_affected_pin() {
+        // T1's wiring dies with a symbol swap; the summary row's marker
+        // sits on one of the dangling pins (pin "1" at sheet (100, 100)),
+        // not on the symbol drawing's center.
+        let e_base = entities(&[
+            instance("T1", "Lib:Tri", "100 100 0", 1),
+            instance("U1", "Lib:Box", "50 50 0", 1),
+            instance("U2", "Lib:Box", "60 60 0", 1),
+            instance("U3", "Lib:Box", "70 70 0", 1),
+        ]);
+        let e_head = entities(&[
+            instance("T1", "Lib:Box", "100 100 0", 1),
+            instance("U1", "Lib:Box", "50 50 0", 1),
+            instance("U2", "Lib:Box", "60 60 0", 1),
+            instance("U3", "Lib:Box", "70 70 0", 1),
+        ]);
+        let base = [
+            net("A", &[("T1", "1"), ("U1", "1")]),
+            net("B", &[("T1", "2"), ("U2", "1")]),
+            net("C", &[("T1", "3"), ("U3", "1")]),
+        ];
+        let changes = diff_connectivity(&"p".into(), &base, &[], &e_base, &e_head);
+        let t = changes
+            .iter()
+            .find(|c| c.reference.as_ref() == "T1")
+            .unwrap();
+        assert_eq!(t.detail, "3 pins disconnected");
+        assert_eq!(t.at_base, Some([100.0, 100.0]));
+    }
+
+    #[test]
+    fn connection_to_added_parts_only_gets_a_row() {
+        // M's pin 5 was truly unconnected and now reaches only newly
+        // added parts: a real connection, reported with the net's name
+        // even though no common part shares the net.
+        let e_base = entities(&[instance("M", "Lib:Box", "100 100 0", 1)]);
+        let e_head = entities(&[
+            instance("M", "Lib:Box", "100 100 0", 1),
+            instance("D", "Lib:Box", "50 50 0", 1),
+        ]);
+        let base = [net("unconnected-(M-Pad5)", &[("M", "5")])];
+        let head = [net("LED", &[("M", "5"), ("D", "1")])];
+        let changes = diff_connectivity(&"p".into(), &base, &head, &e_base, &e_head);
+        let details: Vec<_> = changes.iter().map(|c| c.detail.as_str()).collect();
+        assert_eq!(details, ["Pin 5: unconnected -> LED (added parts)"]);
+    }
+
+    #[test]
+    fn neighbor_swap_keeps_the_pin_silent() {
+        // A pull-up replaced under a new reference (on a renamed sheet)
+        // leaves M's pin lone on both sides with the same net label: no
+        // rewiring happened, so nothing is reported.
+        let e_base = entities(&[
+            instance("M", "Lib:Box", "100 100 0", 1),
+            instance("R1", "Lib:Box", "50 50 0", 1),
+        ]);
+        let e_head = entities(&[
+            instance("M", "Lib:Box", "100 100 0", 1),
+            instance("R2", "Lib:Box", "50 50 0", 1),
+        ]);
+        let base = [net("/sheet/PULL", &[("M", "5"), ("R1", "1")])];
+        let head = [net("/renamed/PULL", &[("M", "5"), ("R2", "1")])];
+        let changes = diff_connectivity(&"p".into(), &base, &head, &e_base, &e_head);
+        assert!(changes.is_empty());
     }
 
     #[test]
